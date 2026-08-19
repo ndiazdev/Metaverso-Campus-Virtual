@@ -1,27 +1,12 @@
-import "./style.css";
+import "../assets/style.css";
 import * as BABYLON from "babylonjs";
 import "babylonjs-loaders";
+import { iniciarLogin } from "../page/login/login";
+import { mostrarDashboard } from "../page/dashboard/dashboard";
+import { obtenerSesion } from "../state/estado";
+import type { Clase } from "../state/estado";
 
 
-
-import { AuthManager } from "./login";
-
-// Instanciar gestor de autenticación
-const auth = new AuthManager();
-
-async function iniciarAplicacion() {
-  // Solicitar inicio de sesión
-  const usuario = await auth.mostrarLogin();
-  console.log("Usuario autenticado:", usuario);
-
-  // Inicializar la escena de Babylon.js
-  const scene = await createScene();
-  engine.runRenderLoop(() => {
-    scene.render();
-  });
-}
-
-iniciarAplicacion();
 
 
 
@@ -327,7 +312,19 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   return scene;
 };
 
-createScene().then((scene) => {
-  engine.runRenderLoop(() => scene.render());
-});
-window.addEventListener("resize", () => engine.resize());
+function entrarAlSalon(clase: Clase) {
+  console.log("Entrando a la clase:", clase);
+  createScene().then((scene) => {
+    engine.runRenderLoop(() => scene.render());
+  });
+  window.addEventListener("resize", () => engine.resize());
+}
+
+const sesionActiva = obtenerSesion();
+if (sesionActiva) {
+  mostrarDashboard(sesionActiva, entrarAlSalon);
+} else {
+  iniciarLogin((cuenta) => {
+    mostrarDashboard(cuenta, entrarAlSalon);
+  });
+}
