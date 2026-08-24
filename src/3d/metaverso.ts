@@ -235,8 +235,8 @@ const createScene = async function (): Promise<BABYLON.Scene> {
       await cargarModelo("silla.glb", new BABYLON.Vector3(x, 0, z), Math.PI, ESCALA_SILLA, scene);
 
       sillas.push({
-        posicion: new BABYLON.Vector3(x, 0.5, z),
-        posicionSentado: new BABYLON.Vector3(x, 1.05, z + 0.1),
+         posicion: new BABYLON.Vector3(x, 0.7, z),
+         posicionSentado: new BABYLON.Vector3(x + 0.198, 1.35, z - 0.4),
         rotacionSentado: Math.PI,
       });
     }

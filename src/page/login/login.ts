@@ -1,14 +1,10 @@
-// ============================================
-// login.ts
-// Pantalla de Login y Registro, con el estilo visual de los mockups:
-// fondo con foto del campus + degradado azul, tarjeta oscura translúcida,
-// botón naranja de acción. Cambia de "Login" a "Crear cuenta" sin recargar.
-// ============================================
 
-import { buscarCuenta, guardarCuenta, guardarSesion } from "../../state/estado";
+
+import { guardarSesion } from "../../state/estado";
 import type { Cuenta, Rol } from "../../state/estado";
 
 const DOMINIO_INSTITUCIONAL = "@usantoto.edu.co";
+const API_URL = "http://localhost:3000/api";
 
 const ESTILOS = `
   .login-overlay {
@@ -42,6 +38,7 @@ const ESTILOS = `
     background: #F2A93B; color: #1a1a1a; font-weight: bold; font-size: 15px; cursor: pointer; margin-top: 4px;
   }
   .login-boton:hover { background: #e69a25; }
+  .login-boton:disabled { background: #888; cursor: not-allowed; }
   .login-error { color: #ff8080; font-size: 12px; min-height: 16px; margin: -8px 0 12px 0; }
   .login-enlace { text-align: center; color: #b8c4dd; font-size: 13px; margin-top: 18px; }
   .login-enlace a { color: #F2A93B; font-weight: bold; cursor: pointer; text-decoration: none; }
@@ -62,10 +59,6 @@ function inyectarEstilos() {
   document.head.appendChild(style);
 }
 
-/**
- * Muestra el login. `alIniciarSesion` se llama con la cuenta cuando
- * el usuario entra correctamente (login o registro exitoso).
- */
 export function iniciarLogin(alIniciarSesion: (cuenta: Cuenta) => void): void {
   inyectarEstilos();
   mostrarFormularioLogin(alIniciarSesion);
@@ -106,7 +99,7 @@ function mostrarFormularioLogin(alIniciarSesion: (cuenta: Cuenta) => void): void
   const botonLogin = overlay.querySelector<HTMLButtonElement>("#botonLogin")!;
   const enlaceRegistro = overlay.querySelector<HTMLAnchorElement>("#enlaceRegistro")!;
 
-  botonLogin.addEventListener("click", () => {
+  botonLogin.addEventListener("click", async () => {
     const correo = campoCorreo.value.trim().toLowerCase();
     const contrasena = campoContrasena.value;
 
@@ -115,15 +108,39 @@ function mostrarFormularioLogin(alIniciarSesion: (cuenta: Cuenta) => void): void
       return;
     }
 
-    const cuenta = buscarCuenta(correo);
-    if (!cuenta || cuenta.contrasena !== contrasena) {
-      mensajeError.textContent = "Correo o contraseña incorrectos.";
+    if (!contrasena) {
+      mensajeError.textContent = "Ingresa tu contraseña.";
       return;
     }
 
-    guardarSesion(cuenta.correo);
-    overlay.remove();
-    alIniciarSesion(cuenta);
+    mensajeError.textContent = "";
+    botonLogin.disabled = true;
+    botonLogin.textContent = "Cargando...";
+
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correo, contrasena }),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        mensajeError.textContent = data.error || "Error al iniciar sesión.";
+        botonLogin.disabled = false;
+        botonLogin.textContent = "Iniciar Sesión";
+        return;
+      }
+
+      guardarSesion(data.cuenta.correo);
+      overlay.remove();
+      alIniciarSesion(data.cuenta);
+    } catch (err) {
+      mensajeError.textContent = "No se pudo conectar con el servidor.";
+      botonLogin.disabled = false;
+      botonLogin.textContent = "Iniciar Sesión";
+    }
   });
 
   enlaceRegistro.addEventListener("click", () => {
@@ -207,7 +224,7 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
     });
   });
 
-  botonRegistrar.addEventListener("click", () => {
+  botonRegistrar.addEventListener("click", async () => {
     const nombreCompleto = campoNombre.value.trim();
     const correo = campoCorreo.value.trim().toLowerCase();
     const contrasena = campoContrasena.value;
@@ -224,12 +241,12 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
       mensajeError.textContent = "La contraseña debe tener al menos 6 caracteres.";
       return;
     }
-    if (buscarCuenta(correo)) {
-      mensajeError.textContent = "Ya existe una cuenta con ese correo. Inicia sesión.";
-      return;
-    }
 
-    const cuenta: Cuenta = {
+    mensajeError.textContent = "";
+    botonRegistrar.disabled = true;
+    botonRegistrar.textContent = "Guardando...";
+
+    const nuevaCuenta = {
       nombreCompleto,
       correo,
       contrasena,
@@ -238,10 +255,30 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
       materia: rolSeleccionado === "docente" ? campoMateria.value.trim() : undefined,
     };
 
-    guardarCuenta(cuenta);
-    guardarSesion(cuenta.correo);
-    overlay.remove();
-    alIniciarSesion(cuenta);
+    try {
+      const res = await fetch(`${API_URL}/registro`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(nuevaCuenta),
+      });
+
+      const data = await res.json();
+
+      if (!res.ok) {
+        mensajeError.textContent = data.error || "Error al registrar la cuenta.";
+        botonRegistrar.disabled = false;
+        botonRegistrar.textContent = "Registrarme";
+        return;
+      }
+
+      guardarSesion(data.cuenta.correo);
+      overlay.remove();
+      alIniciarSesion(data.cuenta);
+    } catch (err) {
+      mensajeError.textContent = "No se pudo conectar con el servidor.";
+      botonRegistrar.disabled = false;
+      botonRegistrar.textContent = "Registrarme";
+    }
   });
 
   enlaceLogin.addEventListener("click", () => {
