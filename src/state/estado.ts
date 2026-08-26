@@ -1,15 +1,21 @@
-// ============================================
-// estado.ts
-// "Backend simulado" con localStorage. Mientras no exista un servidor real,
-// esto guarda cuentas y clases en el navegador para que el flujo completo
-// (registro → login → crear clase → unirse a clase) funcione de principio a fin.
-//
-// IMPORTANTE: esto solo persiste en ESTE navegador. Un profesor creando una
-// clase en su computador no la va a poder ver un estudiante en el suyo hasta
-// que conectemos un backend real (esa es la siguiente etapa del proyecto).
-// ============================================
 
-export type Rol = "estudiante" | "docente";
+
+export type Rol = "estudiante" | "docente" | "admin" | "invitado";
+
+const DOMINIO_INSTITUCIONAL = "@usantoto.edu.co";
+
+
+export function detectarRolPorCorreo(correo: string): Rol {
+  const correoNormalizado = correo.trim().toLowerCase();
+  if (!correoNormalizado.endsWith(DOMINIO_INSTITUCIONAL)) {
+    return "invitado";
+  }
+  const parteLocal = correoNormalizado.split("@")[0];
+  const prefijosDocente = ["profe.", "profesor.", "docente."];
+  if (prefijosDocente.some((prefijo) => parteLocal.startsWith(prefijo))) return "docente";
+  if (parteLocal.startsWith("admin.")) return "admin";
+  return "estudiante";
+}
 
 export interface Cuenta {
   nombreCompleto: string;

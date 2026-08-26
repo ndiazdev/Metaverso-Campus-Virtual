@@ -1,19 +1,39 @@
-
-
-import { guardarSesion } from "../../state/estado";
+import { guardarSesion, detectarRolPorCorreo } from "../../state/estado";
 import type { Cuenta, Rol } from "../../state/estado";
 
 const DOMINIO_INSTITUCIONAL = "@usantoto.edu.co";
 const API_URL = "http://localhost:3000/api";
+
+const ETIQUETAS_ROL: Record<Rol, string> = {
+  estudiante: "🎓 Estudiante",
+  docente: "📋 Docente",
+  admin: "🛡️ Administrador",
+  invitado: "👤 Invitado",
+};
 
 const ESTILOS = `
   .login-overlay {
     position: fixed; inset: 0; z-index: 1000;
     display: flex; align-items: center; justify-content: center;
     font-family: sans-serif;
-    background: linear-gradient(rgba(10,25,60,0.75), rgba(10,25,60,0.75)),
-      url('https://comunicaciones.santototunja.edu.co/wp-content/uploads/2020/11/Santoto_Tunja_Campus_Centro_Historico.jpg') center/cover;
+    
+    
+    background-image: url('https://comunicaciones.santototunja.edu.co/wp-content/uploads/2020/11/Santoto_Tunja_Campus_Centro_Historico.jpg');
+    background-position: center;
+    background-size: cover;
+    background-repeat: no-repeat;
+    background-color: #062a5c; 
   }
+    .logo-login {
+  width: 170px;         
+  height: 170px;        
+  object-fit: contain; 
+  border-radius: 50%;   
+  background-color: #0d2c54; 
+  padding: 8px;         
+  display: block;       
+  margin: 0 auto 15px auto; 
+}
   .login-encabezado { text-align: center; margin-bottom: 24px; }
   .login-icono {
     width: 56px; height: 56px; border-radius: 14px; background: #1F3864;
@@ -42,13 +62,11 @@ const ESTILOS = `
   .login-error { color: #ff8080; font-size: 12px; min-height: 16px; margin: -8px 0 12px 0; }
   .login-enlace { text-align: center; color: #b8c4dd; font-size: 13px; margin-top: 18px; }
   .login-enlace a { color: #F2A93B; font-weight: bold; cursor: pointer; text-decoration: none; }
-  .login-roles { display: flex; gap: 12px; margin-bottom: 16px; }
-  .login-rol-opcion {
-    flex: 1; padding: 16px 8px; border-radius: 8px; border: 1px solid rgba(255,255,255,0.15);
-    background: rgba(255,255,255,0.05); text-align: center; cursor: pointer; color: #cfd8ea; font-size: 13px;
+  .login-rol-detectado {
+    background: rgba(242,169,59,0.12); border: 1px solid rgba(242,169,59,0.35); border-radius: 8px;
+    padding: 10px 14px; color: #F2A93B; font-size: 13px; font-weight: bold; text-align: center;
+    margin-bottom: 16px; display: none;
   }
-  .login-rol-opcion.activo { border-color: #F2A93B; background: rgba(242,169,59,0.15); color: white; }
-  .login-rol-icono { font-size: 22px; display: block; margin-bottom: 6px; }
 `;
 
 function inyectarEstilos() {
@@ -64,22 +82,28 @@ export function iniciarLogin(alIniciarSesion: (cuenta: Cuenta) => void): void {
   mostrarFormularioLogin(alIniciarSesion);
 }
 
-function mostrarFormularioLogin(alIniciarSesion: (cuenta: Cuenta) => void): void {
+function mostrarFormularioLogin(
+  alIniciarSesion: (cuenta: Cuenta) => void,
+): void {
   const overlay = document.createElement("div");
   overlay.className = "login-overlay";
 
   overlay.innerHTML = `
-    <div>
-      <div class="login-encabezado">
-        <div class="login-icono">🎓</div>
-        <h1 class="login-titulo">USTA Metaverso</h1>
-        <p class="login-subtitulo">Universidad Santo Tomás · Tunja</p>
-      </div>
+    <div class="login-overlay">
+      <!-- Moviendo el encabezado adentro de la tarjeta -->
       <div class="login-tarjeta">
-        <label class="login-etiqueta">Correo institucional</label>
+        
+        <div class="login-encabezado" style="text-align: center; margin-bottom: 24px;">
+          <img class="logo-login" src="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcSyfi7TEQfvPpjTWsqljga0WB5N-h8SfivBv1XE7oxR_vwj3cR9SIMZssPe&s=10" alt="Logo USTA">
+          <h1 class="login-titulo" style="color: white; margin-top: 10px;">Metaverso </h1>
+          <p class="login-subtitulo" style="color: #ccc;">Universidad Santo Tomás · Tunja</p>
+        </div>
+
+        <!-- Campos del formulario -->
+        <label class="login-etiqueta">CORREO INSTITUCIONAL O PERSONAL</label>
         <input id="campoCorreo" class="login-input" type="email" placeholder="usuario@usantoto.edu.co" />
 
-        <label class="login-etiqueta">Contraseña</label>
+        <label class="login-etiqueta">CONTRASEÑA</label>
         <input id="campoContrasena" class="login-input" type="password" placeholder="••••••••" />
 
         <p class="login-error" id="mensajeError"></p>
@@ -94,22 +118,20 @@ function mostrarFormularioLogin(alIniciarSesion: (cuenta: Cuenta) => void): void
   document.body.appendChild(overlay);
 
   const campoCorreo = overlay.querySelector<HTMLInputElement>("#campoCorreo")!;
-  const campoContrasena = overlay.querySelector<HTMLInputElement>("#campoContrasena")!;
-  const mensajeError = overlay.querySelector<HTMLParagraphElement>("#mensajeError")!;
+  const campoContrasena =
+    overlay.querySelector<HTMLInputElement>("#campoContrasena")!;
+  const mensajeError =
+    overlay.querySelector<HTMLParagraphElement>("#mensajeError")!;
   const botonLogin = overlay.querySelector<HTMLButtonElement>("#botonLogin")!;
-  const enlaceRegistro = overlay.querySelector<HTMLAnchorElement>("#enlaceRegistro")!;
+  const enlaceRegistro =
+    overlay.querySelector<HTMLAnchorElement>("#enlaceRegistro")!;
 
   botonLogin.addEventListener("click", async () => {
     const correo = campoCorreo.value.trim().toLowerCase();
     const contrasena = campoContrasena.value;
 
-    if (!correo.endsWith(DOMINIO_INSTITUCIONAL)) {
-      mensajeError.textContent = `Usa tu correo institucional (${DOMINIO_INSTITUCIONAL})`;
-      return;
-    }
-
-    if (!contrasena) {
-      mensajeError.textContent = "Ingresa tu contraseña.";
+    if (!correo || !contrasena) {
+      mensajeError.textContent = "Ingresa correo y contraseña.";
       return;
     }
 
@@ -149,7 +171,9 @@ function mostrarFormularioLogin(alIniciarSesion: (cuenta: Cuenta) => void): void
   });
 }
 
-function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): void {
+function mostrarFormularioRegistro(
+  alIniciarSesion: (cuenta: Cuenta) => void,
+): void {
   const overlay = document.createElement("div");
   overlay.className = "login-overlay";
 
@@ -163,23 +187,15 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
         <label class="login-etiqueta">Nombre completo</label>
         <input id="campoNombre" class="login-input" type="text" placeholder="Tu nombre completo" />
 
-        <label class="login-etiqueta">Correo institucional</label>
-        <input id="campoCorreo" class="login-input" type="email" placeholder="usuario@usantoto.edu.co" />
+        <label class="login-etiqueta">Correo</label>
+        <input id="campoCorreo" class="login-input" type="email" placeholder="nombre.apellido@usantoto.edu.co" />
+
+        <div class="login-rol-detectado" id="rolDetectado"></div>
 
         <label class="login-etiqueta">Contraseña</label>
         <input id="campoContrasena" class="login-input" type="password" placeholder="••••••••" />
 
-        <label class="login-etiqueta">Selecciona tu rol</label>
-        <div class="login-roles">
-          <div class="login-rol-opcion activo" data-rol="estudiante">
-            <span class="login-rol-icono">🎓</span> Estudiante
-          </div>
-          <div class="login-rol-opcion" data-rol="docente">
-            <span class="login-rol-icono">📋</span> Docente
-          </div>
-        </div>
-
-        <div id="zonaEstudiante">
+        <div id="zonaEstudiante" style="display:none;">
           <label class="login-etiqueta">Carrera</label>
           <input id="campoCarrera" class="login-input" type="text" placeholder="Ej: Ingeniería de Sistemas" />
         </div>
@@ -202,26 +218,41 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
 
   const campoNombre = overlay.querySelector<HTMLInputElement>("#campoNombre")!;
   const campoCorreo = overlay.querySelector<HTMLInputElement>("#campoCorreo")!;
-  const campoContrasena = overlay.querySelector<HTMLInputElement>("#campoContrasena")!;
-  const campoCarrera = overlay.querySelector<HTMLInputElement>("#campoCarrera")!;
-  const campoMateria = overlay.querySelector<HTMLInputElement>("#campoMateria")!;
-  const mensajeError = overlay.querySelector<HTMLParagraphElement>("#mensajeError")!;
-  const botonRegistrar = overlay.querySelector<HTMLButtonElement>("#botonRegistrar")!;
+  const campoContrasena =
+    overlay.querySelector<HTMLInputElement>("#campoContrasena")!;
+  const campoCarrera =
+    overlay.querySelector<HTMLInputElement>("#campoCarrera")!;
+  const campoMateria =
+    overlay.querySelector<HTMLInputElement>("#campoMateria")!;
+  const mensajeError =
+    overlay.querySelector<HTMLParagraphElement>("#mensajeError")!;
+  const botonRegistrar =
+    overlay.querySelector<HTMLButtonElement>("#botonRegistrar")!;
   const enlaceLogin = overlay.querySelector<HTMLAnchorElement>("#enlaceLogin")!;
-  const opcionesRol = overlay.querySelectorAll<HTMLDivElement>(".login-rol-opcion");
-  const zonaEstudiante = overlay.querySelector<HTMLDivElement>("#zonaEstudiante")!;
+  const rolDetectadoDiv =
+    overlay.querySelector<HTMLDivElement>("#rolDetectado")!;
+  const zonaEstudiante =
+    overlay.querySelector<HTMLDivElement>("#zonaEstudiante")!;
   const zonaDocente = overlay.querySelector<HTMLDivElement>("#zonaDocente")!;
 
-  let rolSeleccionado: Rol = "estudiante";
+  // Cada vez que el usuario escribe el correo, mostramos en vivo qué rol le tocaría
+  campoCorreo.addEventListener("input", () => {
+    const correo = campoCorreo.value.trim();
+    if (correo.length < 5 || !correo.includes("@")) {
+      rolDetectadoDiv.style.display = "none";
+      zonaEstudiante.style.display = "none";
+      zonaDocente.style.display = "none";
+      return;
+    }
 
-  opcionesRol.forEach((opcion) => {
-    opcion.addEventListener("click", () => {
-      opcionesRol.forEach((o) => o.classList.remove("activo"));
-      opcion.classList.add("activo");
-      rolSeleccionado = opcion.dataset.rol as Rol;
-      zonaEstudiante.style.display = rolSeleccionado === "estudiante" ? "block" : "none";
-      zonaDocente.style.display = rolSeleccionado === "docente" ? "block" : "none";
-    });
+    const rol = detectarRolPorCorreo(correo);
+    rolDetectadoDiv.style.display = "block";
+    rolDetectadoDiv.textContent = `Rol detectado: ${ETIQUETAS_ROL[rol]}`;
+
+    // Estudiante e invitado ven el campo de carrera; docente y admin no lo necesitan
+    zonaEstudiante.style.display =
+      rol === "estudiante" || rol === "invitado" ? "block" : "none";
+    zonaDocente.style.display = rol === "docente" ? "block" : "none";
   });
 
   botonRegistrar.addEventListener("click", async () => {
@@ -233,12 +264,13 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
       mensajeError.textContent = "Escribe tu nombre completo.";
       return;
     }
-    if (!correo.endsWith(DOMINIO_INSTITUCIONAL)) {
-      mensajeError.textContent = `Usa tu correo institucional (${DOMINIO_INSTITUCIONAL})`;
+    if (!correo.includes("@")) {
+      mensajeError.textContent = "Escribe un correo válido.";
       return;
     }
     if (contrasena.length < 6) {
-      mensajeError.textContent = "La contraseña debe tener al menos 6 caracteres.";
+      mensajeError.textContent =
+        "La contraseña debe tener al menos 6 caracteres.";
       return;
     }
 
@@ -246,13 +278,18 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
     botonRegistrar.disabled = true;
     botonRegistrar.textContent = "Guardando...";
 
+    const rolPrevisto = detectarRolPorCorreo(correo);
+
     const nuevaCuenta = {
       nombreCompleto,
       correo,
       contrasena,
-      rol: rolSeleccionado,
-      carrera: rolSeleccionado === "estudiante" ? campoCarrera.value.trim() : undefined,
-      materia: rolSeleccionado === "docente" ? campoMateria.value.trim() : undefined,
+      carrera:
+        rolPrevisto === "estudiante" || rolPrevisto === "invitado"
+          ? campoCarrera.value.trim()
+          : undefined,
+      materia:
+        rolPrevisto === "docente" ? campoMateria.value.trim() : undefined,
     };
 
     try {
@@ -265,7 +302,8 @@ function mostrarFormularioRegistro(alIniciarSesion: (cuenta: Cuenta) => void): v
       const data = await res.json();
 
       if (!res.ok) {
-        mensajeError.textContent = data.error || "Error al registrar la cuenta.";
+        mensajeError.textContent =
+          data.error || "Error al registrar la cuenta.";
         botonRegistrar.disabled = false;
         botonRegistrar.textContent = "Registrarme";
         return;
