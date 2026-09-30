@@ -1,11 +1,13 @@
 {
-  "name": "server",
+  "name": "campus-metaverso-backend",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.ts",
+  "description": "API del Campus Metaverso: login, roles, clases e inscripciones",
+  "main": "src/index.ts",
   "type": "commonjs",
   "scripts": {
-    "dev": "tsx watch index.ts"
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "check": "tsc --noEmit"
   },
   "keywords": [],
   "author": "",

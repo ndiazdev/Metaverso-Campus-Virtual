@@ -1,21 +1,14 @@
 {
   "name": "campus-metaverso",
   "private": true,
-  "version": "0.0.0",
-  "type": "module",
+  "version": "1.0.0",
+  "description": "Campus Metaverso: aula 3D con dashboards. Frontend (Vite) y backend (Express) separados.",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc && vite build",
-    "preview": "vite preview"
-  },
-  "devDependencies": {
-    "typescript": "~6.0.2",
-    "vite": "^8.2.0"
-  },
-  "dependencies": {
-    "@fortawesome/fontawesome-free": "^7.3.1",
-    "babylonjs": "^9.21.2",
-    "babylonjs-loaders": "^9.21.2",
-    "pdfjs-dist": "^6.3.289"
+    "dev": "node scripts/dev.cjs",
+    "dev:front": "npm --prefix frontend run dev",
+    "dev:back": "npm --prefix backend run dev",
+    "build": "npm --prefix frontend run build",
+    "start": "npm --prefix backend run start",
+    "verificar": "npm --prefix frontend run build && npm --prefix backend run check"
   }
 }

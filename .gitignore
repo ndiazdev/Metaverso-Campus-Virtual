@@ -22,3 +22,9 @@ dist-ssr
 *.njsproj
 *.sln
 *.sw?
+
+# Variables de entorno: credenciales reales, NUNCA se suben a git.
+# En su lugar existe un .env.example (de ejemplo) que sí se sube.
+.env
+.env.*
+!.env.example

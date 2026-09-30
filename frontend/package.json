@@ -1,0 +1,21 @@
+{
+  "name": "campus-metaverso-frontend",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "typescript": "~6.0.2",
+    "vite": "^8.2.0"
+  },
+  "dependencies": {
+    "@fortawesome/fontawesome-free": "^7.3.1",
+    "babylonjs": "^9.21.2",
+    "babylonjs-loaders": "^9.21.2",
+    "pdfjs-dist": "^6.3.289"
+  }
+}

@@ -3,7 +3,7 @@ import type { Cuenta, Rol } from "../../state/estado";
 import { LOGO_URL } from "../dashboard/dashboardEstilos";
 import "@fortawesome/fontawesome-free/css/all.min.css";
 
-const API_URL = "http://localhost:3000/api";
+import { API_URL } from "../../api/cliente";
 
 const ETIQUETAS_ROL: Record<Rol, string> = {
   estudiante: "Estudiante",

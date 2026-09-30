@@ -1,7 +1,6 @@
 import type { Cuenta, Clase } from "../../state/estado";
 import { IMAGENES_ROL, ETIQUETAS_ROL } from "./dashboardComun";
-
-const API_URL = "http://localhost:3000/api";
+import { API_URL } from "../../api/cliente";
 
 export interface DashboardAdminOpciones {
   cuenta: Cuenta & { id?: number };

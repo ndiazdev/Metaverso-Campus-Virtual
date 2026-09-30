@@ -1,52 +1,40 @@
 // ============================================================
-// DASHBOARD DOCENTE
-// Gestión de clases creadas por el docente
+// DASHBOARD INVITADO
+// Gestión de clases en las que el invitado está inscrito
+//
+// El invitado utiliza prácticamente la misma lógica que
+// el estudiante:
+// - Consultar clases inscritas
+// - Unirse a una clase
+// - Entrar a una clase
+//
+// No puede crear clases ni gestionar usuarios.
 // ============================================================
 
 import type { Cuenta, Clase } from "../../state/estado";
+import { IMAGENES_ROL, ETIQUETAS_ROL } from "./dashboardComun";
+import { API_URL } from "../../api/cliente";
 
 // ============================================================
-// CONFIGURACIÓN API
+// OPCIONES DEL DASHBOARD INVITADO
 // ============================================================
 
-const API_URL = "http://localhost:3000/api";
-
-// ============================================================
-// INTERFAZ DE OPCIONES
-// ============================================================
-
-export interface DashboardDocenteOpciones {
-  /**
-   * Cuenta del docente actualmente conectado.
-   */
+export interface DashboardInvitadoOpciones {
   cuenta: Cuenta & { id?: number };
 
-  /**
-   * Contenedor donde se mostrará el contenido.
-   */
   contenido: HTMLDivElement;
 
-  /**
-   * Overlay principal del dashboard.
-   *
-   * Se utiliza para cerrarlo antes de entrar
-   * a una clase.
-   */
   overlay: HTMLDivElement;
 
-  /**
-   * Función que se ejecuta cuando el docente
-   * entra/abre una clase.
-   */
   alEntrarAClase: (clase: Clase) => void;
 }
 
 // ============================================================
-// MOSTRAR DASHBOARD DEL DOCENTE
+// MOSTRAR DASHBOARD DEL INVITADO
 // ============================================================
 
-export async function mostrarDashboardDocente(
-  opciones: DashboardDocenteOpciones,
+export async function mostrarDashboardInvitado(
+  opciones: DashboardInvitadoOpciones,
 ): Promise<void> {
   const { cuenta, contenido, overlay, alEntrarAClase } = opciones;
 
@@ -61,13 +49,13 @@ export async function mostrarDashboardDocente(
   `;
 
   // ==========================================================
-  // CONSULTAR CLASES DEL DOCENTE
+  // CONSULTAR CLASES DEL INVITADO
   // ==========================================================
 
   let misClases: Clase[] = [];
 
   try {
-    const endpoint = `${API_URL}/clases/docente/${encodeURIComponent(
+    const endpoint = `${API_URL}/clases/estudiante/${encodeURIComponent(
       cuenta.correo,
     )}`;
 
@@ -77,11 +65,11 @@ export async function mostrarDashboardDocente(
       misClases = await res.json();
     }
   } catch (error) {
-    console.error("Error al consultar clases del docente:", error);
+    console.error("Error al consultar clases del invitado:", error);
   }
 
   // ==========================================================
-  // MOSTRAR CONTENIDO
+  // MOSTRAR DASHBOARD
   // ==========================================================
 
   contenido.innerHTML = `
@@ -94,40 +82,30 @@ export async function mostrarDashboardDocente(
 
       <div class="dash-columna-izq">
 
-        <!-- Rol -->
-
         <div class="dash-etiqueta-rol">
-          DOCENTE
+          ${ETIQUETAS_ROL[cuenta.rol]}
         </div>
 
-
-        <!-- Nombre -->
 
         <p class="dash-nombre-usuario">
           ${cuenta.nombreCompleto.split(" ")[0]}
         </p>
 
 
-        <!-- Avatar -->
-
         <img
           class="dash-avatar-img"
-          src="https://d2yoo3qu6vrk5d.cloudfront.net/pulzo-lite/images-resized/PP3946599-h-o.webp"
-          alt="Avatar del docente"
+          src="${IMAGENES_ROL[cuenta.rol]}"
+          alt="Avatar"
         />
 
-
-        <!-- Botón crear clase -->
 
         <button
           class="dash-boton-principal"
           id="botonAccionPrincipal"
         >
-          Crear Clase
+          Unirse a Clase
         </button>
 
-
-        <!-- Usuarios conectados -->
 
         <p class="dash-contador">
           ● 47 usuarios conectados
@@ -142,14 +120,10 @@ export async function mostrarDashboardDocente(
 
       <div class="dash-columna-der">
 
-        <!-- Título -->
-
         <p class="dash-seccion-titulo">
-          Mis clases creadas
+          Mis clases inscritas
         </p>
 
-
-        <!-- Lista -->
 
         <div id="listaClases">
 
@@ -157,12 +131,13 @@ export async function mostrarDashboardDocente(
             misClases.length === 0
               ? `
                 <p class="dash-sin-clases">
-                  Todavía no tienes clases creadas.
+                  Todavía no tienes clases inscritas.
                 </p>
               `
               : misClases
                   .map(
                     (clase) => `
+
                       <div class="dash-tarjeta-clase">
 
                         <div>
@@ -171,8 +146,14 @@ export async function mostrarDashboardDocente(
                             ${clase.materia}
                           </p>
 
+
                           <p class="dash-clase-meta">
                             ${clase.codigo}
+                            ${
+                              clase.nombreDocente
+                                ? " · " + clase.nombreDocente
+                                : ""
+                            }
                           </p>
 
                         </div>
@@ -182,10 +163,11 @@ export async function mostrarDashboardDocente(
                           class="dash-boton-entrar"
                           data-codigo="${clase.codigo}"
                         >
-                          Abrir
+                          Entrar
                         </button>
 
                       </div>
+
                     `,
                   )
                   .join("")
@@ -207,7 +189,7 @@ export async function mostrarDashboardDocente(
             </div>
 
             <div class="dash-stat-etiqueta">
-              Clases creadas
+              Clases inscritas
             </div>
 
           </div>
@@ -234,7 +216,7 @@ export async function mostrarDashboardDocente(
   `;
 
   // ==========================================================
-  // BOTONES "ABRIR"
+  // BOTONES "ENTRAR"
   // ==========================================================
 
   contenido
@@ -262,7 +244,7 @@ export async function mostrarDashboardDocente(
     });
 
   // ==========================================================
-  // BOTÓN CREAR CLASE
+  // BOTÓN "UNIRSE A CLASE"
   // ==========================================================
 
   const botonPrincipal = contenido.querySelector<HTMLButtonElement>(
@@ -271,45 +253,37 @@ export async function mostrarDashboardDocente(
 
   if (botonPrincipal) {
     botonPrincipal.addEventListener("click", () => {
-      abrirModalCrearClase();
+      abrirModalUnirseClase();
     });
   }
 
   // ==========================================================
-  // MODAL CREAR CLASE
+  // MODAL PARA UNIRSE A UNA CLASE
   // ==========================================================
 
-  function abrirModalCrearClase(): void {
+  function abrirModalUnirseClase(): void {
     const modal = document.createElement("div");
 
     modal.className = "dash-modal-fondo";
-
-    // --------------------------------------------------------
-    // HTML DEL MODAL
-    // --------------------------------------------------------
 
     modal.innerHTML = `
 
       <div class="dash-modal">
 
         <h3>
-          Crear nueva clase
+          Unirse a una clase
         </h3>
 
 
         <p>
-          Escribe la materia que vas a dictar
+          Escribe el código que te dio tu docente
         </p>
 
 
         <input
           class="dash-input-codigo"
-          id="campoMateriaNueva"
-          placeholder="Ej: Cálculo II"
-          style="
-            text-transform:none;
-            letter-spacing:normal;
-          "
+          id="campoCodigoUnirse"
+          placeholder="EJ: CAL-123"
         />
 
 
@@ -321,9 +295,9 @@ export async function mostrarDashboardDocente(
 
         <button
           class="dash-boton-principal"
-          id="botonConfirmarClase"
+          id="botonConfirmarUnirse"
         >
-          Generar clase
+          Inscribirme
         </button>
 
       </div>
@@ -336,61 +310,47 @@ export async function mostrarDashboardDocente(
     // ELEMENTOS DEL MODAL
     // ========================================================
 
-    const campoMateria =
-      modal.querySelector<HTMLInputElement>("#campoMateriaNueva")!;
+    const campoCodigo =
+      modal.querySelector<HTMLInputElement>("#campoCodigoUnirse")!;
 
     const errorModal =
       modal.querySelector<HTMLParagraphElement>("#errorModal")!;
 
     const botonConfirmar = modal.querySelector<HTMLButtonElement>(
-      "#botonConfirmarClase",
+      "#botonConfirmarUnirse",
     )!;
 
     // ========================================================
-    // CONFIRMAR CREACIÓN
+    // CONFIRMAR INSCRIPCIÓN
     // ========================================================
 
     botonConfirmar.addEventListener("click", async () => {
-      // ----------------------------------------------------
-      // Obtener materia
-      // ----------------------------------------------------
-
-      const materia = campoMateria.value.trim();
+      const codigo = campoCodigo.value.trim().toUpperCase();
 
       // ----------------------------------------------------
-      // Validar
+      // Validación
       // ----------------------------------------------------
 
-      if (materia.length === 0) {
-        errorModal.textContent = "Escribe el nombre de la materia.";
+      if (!codigo) {
+        errorModal.textContent = "Ingresa un código válido.";
 
         return;
       }
 
       // ----------------------------------------------------
-      // Generar código
-      // ----------------------------------------------------
-
-      const prefijo = materia.substring(0, 3).toUpperCase();
-
-      const numAzar = Math.floor(100 + Math.random() * 900);
-
-      const codigoGenerado = `${prefijo}-${numAzar}`;
-
-      // ----------------------------------------------------
-      // Desactivar botón mientras se guarda
+      // Estado de carga
       // ----------------------------------------------------
 
       botonConfirmar.disabled = true;
 
-      botonConfirmar.textContent = "Guardando...";
+      botonConfirmar.textContent = "Uniéndote...";
 
       try {
         // ==================================================
-        // GUARDAR EN API
+        // INSCRIBIR AL INVITADO
         // ==================================================
 
-        const res = await fetch(`${API_URL}/clases`, {
+        const res = await fetch(`${API_URL}/inscripciones`, {
           method: "POST",
 
           headers: {
@@ -398,104 +358,45 @@ export async function mostrarDashboardDocente(
           },
 
           body: JSON.stringify({
-            codigo: codigoGenerado,
+            correoEstudiante: cuenta.correo,
 
-            materia: materia,
-
-            correoDocente: cuenta.correo,
-
-            nombreDocente: cuenta.nombreCompleto,
+            codigoClase: codigo,
           }),
         });
 
+        const data = await res.json();
+
         // ==================================================
-        // ERROR DEL SERVIDOR
+        // ERROR
         // ==================================================
 
         if (!res.ok) {
-          errorModal.textContent = "Error al guardar en MySQL.";
+          errorModal.textContent = data.error || "Código no encontrado.";
 
           botonConfirmar.disabled = false;
 
-          botonConfirmar.textContent = "Generar clase";
+          botonConfirmar.textContent = "Inscribirme";
 
           return;
         }
 
         // ==================================================
-        // CLASE CREADA
+        // INSCRIPCIÓN EXITOSA
         // ==================================================
 
-        modal.innerHTML = `
+        modal.remove();
 
-            <div class="dash-modal">
+        // Recargar las clases del invitado
 
-              <h3>
-                ¡Clase creada!
-              </h3>
-
-
-              <p>
-                Comparte este código con tus estudiantes
-              </p>
-
-
-              <div
-                class="dash-codigo-grande"
-              >
-                ${codigoGenerado}
-              </div>
-
-
-              <button
-                class="dash-boton-principal"
-                id="botonEntrarAhora"
-              >
-                Entrar a la clase
-              </button>
-
-            </div>
-
-          `;
-
-        // ==================================================
-        // ENTRAR A LA CLASE RECIÉN CREADA
-        // ==================================================
-
-        const botonEntrarAhora =
-          modal.querySelector<HTMLButtonElement>("#botonEntrarAhora");
-
-        if (botonEntrarAhora) {
-          botonEntrarAhora.addEventListener("click", () => {
-            modal.remove();
-
-            overlay.remove();
-
-            const nuevaClase: Clase = {
-              codigo: codigoGenerado,
-
-              materia: materia,
-
-              correoDocente: cuenta.correo,
-
-              nombreDocente: cuenta.nombreCompleto,
-
-              fechaCreacion: new Date().toISOString(),
-
-              estudiantesInscritos: [],
-            };
-
-            alEntrarAClase(nuevaClase);
-          });
-        }
+        mostrarDashboardInvitado(opciones);
       } catch (error) {
-        console.error("Error al crear clase:", error);
+        console.error("Error al inscribirse a la clase:", error);
 
         errorModal.textContent = "No se pudo conectar con el servidor.";
 
         botonConfirmar.disabled = false;
 
-        botonConfirmar.textContent = "Generar clase";
+        botonConfirmar.textContent = "Inscribirme";
       }
     });
   }
