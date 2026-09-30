@@ -86,15 +86,75 @@ export function inscribirEstudiante(codigo: string, correoEstudiante: string): b
   return true;
 }
 
-// ---------- Sesión activa ----------
-export function guardarSesion(correo: string): void {
-  localStorage.setItem(CLAVE_SESION, correo);
+// ---------- Sesión activa (el "token" con el que entraste) ----------
+/**
+ * Token de sesión: se guarda COMPLETO el usuario con el que se inició sesión,
+ * no solo el correo. Así, al salir de la clase (⚙️ → Salir), el panel que se
+ * muestra es el de la cuenta con la que entraste, aunque esa cuenta venga del
+ * backend (API) y no exista en el localStorage local.
+ *
+ * El backend todavía no emite JWT: cuando lo haga, el mismo objeto lo guarda
+ * en `token` y aquí queda listo para reenviarlo en los `fetch`.
+ */
+interface SesionGuardada {
+  version: 1;
+  correo: string;
+  cuenta: Cuenta;
+  token?: string;
+  abiertoEn: string;
 }
 
+export function guardarSesion(
+  correo: string,
+  cuenta?: Cuenta,
+  token?: string,
+): void {
+  const datos: Cuenta | undefined = cuenta ?? buscarCuenta(correo);
+  if (!datos) {
+    // Sin cuenta completa (no debería pasar): al menos recuerda el correo.
+    localStorage.setItem(CLAVE_SESION, correo);
+    return;
+  }
+  const sesion: SesionGuardada = {
+    version: 1,
+    correo,
+    cuenta: datos,
+    token,
+    abiertoEn: new Date().toISOString(),
+  };
+  localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion));
+}
+
+/** Cuenta de la sesión abierta, o null si no hay sesión. */
 export function obtenerSesion(): Cuenta | null {
-  const correo = localStorage.getItem(CLAVE_SESION);
-  if (!correo) return null;
-  return buscarCuenta(correo) || null;
+  const crudo = localStorage.getItem(CLAVE_SESION);
+  if (!crudo) return null;
+
+  // Formato viejo: solo el correo en texto plano.
+  if (!crudo.startsWith("{")) return buscarCuenta(crudo) || null;
+
+  try {
+    const sesion = JSON.parse(crudo) as Partial<SesionGuardada>;
+    const cuenta = sesion.cuenta;
+    if (cuenta?.correo) return cuenta;
+    // Datos incompletos: último recurso, buscar por correo guardado.
+    if (sesion.correo) return buscarCuenta(sesion.correo) || null;
+    return null;
+  } catch {
+    return buscarCuenta(crudo) || null;
+  }
+}
+
+/** Token del backend si existe (pendiente: el API aún no lo emite). */
+export function obtenerToken(): string | null {
+  const crudo = localStorage.getItem(CLAVE_SESION);
+  if (!crudo || !crudo.startsWith("{")) return null;
+  try {
+    const sesion = JSON.parse(crudo) as Partial<SesionGuardada>;
+    return sesion.token ?? null;
+  } catch {
+    return null;
+  }
 }
 
 export function cerrarSesion(): void {

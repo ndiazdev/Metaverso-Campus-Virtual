@@ -3,7 +3,6 @@ import type { Cuenta, Rol } from "../../state/estado";
 
 import {
   LOGO_URL,
-  COLOR_PRIMARIO,
   COLOR_ACENTO,
   inyectarEstilosDashboard,
 } from "./dashboardEstilos";

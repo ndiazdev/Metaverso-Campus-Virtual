@@ -5,8 +5,6 @@
 
 import type { Cuenta, Clase } from "../../state/estado";
 
-import { COLOR_ACENTO } from "./dashboardEstilos";
-
 // ============================================================
 // CONFIGURACIÓN API
 // ============================================================
