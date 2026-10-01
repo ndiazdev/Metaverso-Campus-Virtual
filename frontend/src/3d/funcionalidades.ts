@@ -35,8 +35,10 @@ export const VELOCIDAD_CAMINAR = 4.0;
 // para que el muro "limite*", las mesas y el corrector de salón frenen en el mismo sitio.
 export const RADIO_PERSONAJE = 0.55;
 
-// Altura del ojo del docente cuando está de pie en el atril.
-export const ALTURA_OJO_PROFESOR = 1.5;
+// Altura del OJO sobre el suelo cuando se va al atril sin cuerpo cargado
+// (cámara suelta): 5.09 u — la misma que fija el salón para una persona de
+// 1.76 m (ojo a 1.60 m; empty TEACH_01). Se suma a ctx.sueloY.
+export const ALTURA_OJO_PROFESOR = 5.09;
 
 // ---------------------------------------------------------------
 // Tipos del mundo con los que trabaja cualquier mapa
@@ -66,6 +68,8 @@ export interface ObstaculoSolido {
 export interface ContextoFuncionalidades {
   /** Escena del mapa (de ahí salen el motor y el bucle de render). */
   escena: BABYLON.Scene;
+  /** Altura del suelo del mapa en unidades del mundo (−0.789 en el salón). */
+  sueloY: number;
   /**
    * Cámara del mapa: las funcionalidades le pegan el cuerpo y giran con ella.
    * Es UniversalCamera (y no Camera) porque el yaw de la mirada vive en
@@ -126,6 +130,11 @@ export interface Funcionalidades {
   alternarAtril: () => void;
   alternarCamara: () => void;
   alternarMano: () => void;
+  /**
+   * Saludo corto (emote 👋): levanta la mano ~3.5 s sin tocar el estado de la
+   * mano alzada (H), que sigue con su propio temporizador de 4 s.
+   */
+  saludar: () => void;
   /** Estado para pintar la barra u otra UI del mapa. */
   estado: () => EstadoFuncionalidades;
   /** true mientras el docente está presentando en el atril. */
@@ -147,6 +156,15 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   let rotacionGuardada = 0;
   let manoAlzada = false;
   let temporizadorMano: number | null = null;
+
+  // ── MÁQUINA DE ANIMACIÓN ────────────────────────────────────────────────────
+  // `moviendose` se reinicia en cada frame y lo pone el bloque de movimiento;
+  // los demás viven hasta que cambie la acción o se destruya el módulo.
+  let moviendose = false;
+  let saludando = false;
+  let temporizadorSaludo: number | null = null;
+  let grupoAnimado: BABYLON.AnimationGroup | null = null;
+  let personajeAnimado: Personaje | null = null;
 
   // -----------------------------------------------------------------------
   // TECLAS DE MOVIMIENTO (WASD). Se registran aquí y se soltarán con
@@ -292,7 +310,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
 
       const detrasDelAtril = new BABYLON.Vector3(
         atril.posicionAtril.x - alFrente.x * (mediaFondo + ctx.radioPersonaje + 0.35),
-        0, // y=0: el suelo, para no dejar el cuerpo flotando en el aire
+        ctx.sueloY, // el suelo REAL del mapa, para no dejar el cuerpo flotando en el aire
         atril.posicionAtril.z - alFrente.z * (mediaFondo + ctx.radioPersonaje + 0.35)
       );
 
@@ -328,7 +346,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     } else if (enEscritorio) {
       if (posicionGuardada && personaje) {
         personaje.raiz.position = posicionGuardada.clone();
-        personaje.raiz.position.y = 0;
+        personaje.raiz.position.y = ctx.sueloY;
       }
       ctx.camara.rotation.y = rotacionGuardada;
       enEscritorio = false;
@@ -345,9 +363,16 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
         : ctx.camara.position.clone();
       rotacionGuardada = ctx.camara.rotation.y;
 
+      // La cámara va al punto de OJO del empty sit_*; el cuerpo va a la misma XZ
+      // pero con los PIES en el suelo real del mapa (SUELO_Y), si no quedaba
+      // hundido en el suelo o flotando.
       ctx.camara.position = parCercano.puntoSit.posicion.clone();
       if (personaje) {
-        personaje.raiz.position = parCercano.puntoSit.posicion.clone();
+        personaje.raiz.position = new BABYLON.Vector3(
+          parCercano.puntoSit.posicion.x,
+          ctx.sueloY,
+          parCercano.puntoSit.posicion.z
+        );
       }
 
       sentado = true;
@@ -355,7 +380,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     } else if (sentado) {
       if (posicionGuardada && personaje) {
         personaje.raiz.position = posicionGuardada.clone();
-        personaje.raiz.position.y = 0;
+        personaje.raiz.position.y = ctx.sueloY;
       }
       ctx.camara.rotation.y = rotacionGuardada;
       sentado = false;
@@ -381,13 +406,64 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   }
 
   // -----------------------------------------------------------------------
+  // MÁQUINA DE ANIMACIÓN + SALUDO
+  // -----------------------------------------------------------------------
+  /**
+   * Elige el clip que debe sonar en este frame. Prioridad: sentado → caminar
+   * → saludar (mano arriba o emote) → parado. Si el slot pedido no existe
+   * (hoy: caminar/sentarse/saludar; el .glb solo trae "parado") se cae a
+   * "parado" para que no siga sonando el clip anterior — p. ej. caminando
+   * mientras se está sentado.
+   */
+  function aplicarAnimacion(): void {
+    const personaje = ctx.personaje();
+    if (!personaje) return;
+    const anim = personaje.animaciones;
+
+    // Si cambió el cuerpo (otra skin, recarga de personaje), los grupos viejos
+    // pertenecían al esqueleto anterior: se olvidan y se arranca de cero.
+    if (personaje !== personajeAnimado) {
+      personajeAnimado = personaje;
+      grupoAnimado = null;
+    }
+
+    const preferido = sentado
+      ? anim.sentarse
+      : moviendose
+        ? anim.caminar
+        : manoAlzada || saludando
+          ? anim.saludar
+          : null;
+    const deseado = (preferido ?? anim.parado) || null;
+
+    if (!deseado || deseado === grupoAnimado) return;
+    grupoAnimado?.stop();
+    grupoAnimado = deseado;
+    // El clip de sentarse es una pose con final (no en bucle); todos los
+    // demás —parado, caminar, saludar— se repiten.
+    deseado.play(deseado !== anim.sentarse);
+  }
+
+  /** Saludo rápido (emote 👋): mueve el brazo 3.5 s sin tocar la mano alzada (H). */
+  function saludar(): void {
+    saludando = true;
+    if (temporizadorSaludo) clearTimeout(temporizadorSaludo);
+    temporizadorSaludo = window.setTimeout(() => {
+      saludando = false;
+      temporizadorSaludo = null;
+      ctx.alCambiarEstado();
+    }, 3500);
+  }
+
+  // -----------------------------------------------------------------------
   // BUCLE DE ACTUALIZACIÓN (registrado en onBeforeRenderObservable)
   // -----------------------------------------------------------------------
   function actualizar(): void {
     const personaje = ctx.personaje();
+    // Se reinicia cada frame: lo pone a true el bloque de movimiento de abajo.
+    moviendose = false;
 
     if (personaje && !sentado && !enEscritorio) {
-      let moviendose = false;
       // Tiempo real de este frame en segundos. El tope de 0.05 s evita un salto de
       // sitio si el navegador se queda sin frames (cambio de pestaña, pantalla de
       // carga...): sin él, una pausa de 2 s mandaría al personaje 8 unidades más allá.
@@ -489,16 +565,13 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       }
       ctx.recortarAlSalon(personaje.raiz.position, ctx.radioPersonaje);
 
-      if (personaje.animacionCaminar) {
-        if (moviendose && !personaje.animacionCaminar.isPlaying) {
-          personaje.animacionCaminar.play(true);
-        } else if (!moviendose && personaje.animacionCaminar.isPlaying) {
-          personaje.animacionCaminar.stop();
-        }
-      }
-
       pegarCamaraAlCuerpo();
     }
+
+    // MÁQUINA DE ANIMACIÓN. Corre SIEMPRE (también sentado y en el atril): el
+    // bloque de movimiento de arriba se salta esos estados y `sentado` solo se
+    // lee aquí abajo. En el atril no hay clip propio: se queda en "parado".
+    aplicarAnimacion();
 
     // Se calcula siempre, aunque estés sentado o en el atril: el iframe de YouTube
     // se posiciona respecto a la cámara (que sí se mueve al teletransportarte al
@@ -573,6 +646,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     alternarAtril,
     alternarCamara,
     alternarMano,
+    saludar,
     enElAtril: () => enEscritorio,
     estado: () => ({
       sentado,
@@ -586,6 +660,12 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       if (temporizadorMano) clearTimeout(temporizadorMano);
       temporizadorMano = null;
       manoAlzada = false;
+      if (temporizadorSaludo) clearTimeout(temporizadorSaludo);
+      temporizadorSaludo = null;
+      saludando = false;
+      grupoAnimado?.stop();
+      grupoAnimado = null;
+      personajeAnimado = null;
       ctx.aviso.style.display = "none";
       ctx.avisoMano.style.display = "none";
     },

@@ -1,4 +1,5 @@
 import type { Cuenta, Clase } from "../../state/estado";
+import { elegirSkin } from "../../ui/elegirSkin";
 import {
   crearDashboardComun,
   type DashboardComun,
@@ -16,12 +17,22 @@ export function mostrarDashboard(
 ): void {
   let comun: DashboardComun;
 
+  // ---------------------------------------------------------------------
+  // INTERCEPTOR ÚNICO: cada botón "Entrar" (clases del rol y panel de
+  // usuarios) pasa por aquí. Primero se elige la skin del rol en la
+  // mini-ventana y, al cerrarla, se continúa con la entrada a la clase.
+  // Así todos los dashboards comparten el mismo punto de interceptación.
+  // ---------------------------------------------------------------------
+  const entrarConSkin = (clase: Clase): void => {
+    void elegirSkin(cuenta.rol).then(() => alEntrarAClase(clase));
+  };
+
   function mostrarClasesSegunRol(): void {
     const opcionesClases = {
       cuenta,
       contenido: comun.contenido,
       overlay: comun.overlay,
-      alEntrarAClase,
+      alEntrarAClase: entrarConSkin,
     };
 
     if (cuenta.rol === "admin") {
@@ -42,7 +53,7 @@ export function mostrarDashboard(
       cuenta,
       contenido: comun.contenido,
       overlay: comun.overlay,
-      alEntrarAClase,
+      alEntrarAClase: entrarConSkin,
     });
   }
 

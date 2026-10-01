@@ -32,6 +32,12 @@ const engine = new BABYLON.Engine(canvas, true);
 
 const ALTURA_ADULTO_PIE = 7.7;
 
+// Cara superior del suelo del salón. Medida con rayos (NullEngine) sobre el .glb:
+// room_primitive2 está en −0.789 en todo el salón (suelo plano). El personaje
+// camina con los PIES AQUÍ, no en 0: con los pies en 0 flotaba 0.789 u = 25 cm
+// sobre la laja.
+const SUELO_Y = -0.789;
+
 // UI DE PROXIMIDAD
 const aviso = document.createElement("div");
 aviso.style.position = "absolute";
@@ -889,6 +895,8 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
     if (nodoTeach) {
       nodoTeach.computeWorldMatrix(true);
       posEnsenar = nodoTeach.absolutePosition.clone();
+      // Nota: puntoEnsenar hoy no se lee en ninguna parte (la cámara del atril
+      // se arma en funcionalidades con detrasDelAtril + alturaOjoProfesor).
       posEnsenar.y += ALTURA_OJO_PROFESOR; 
       rotEnsenar = nodoTeach.rotationQuaternion ? nodoTeach.rotationQuaternion.toEulerAngles().y : nodoTeach.rotation.y;
     } else {
@@ -948,17 +956,19 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   scene.collisionsEnabled = true;
   scene.clearColor = new BABYLON.Color4(0.75, 0.85, 0.95, 1);
 
-  // 1. CARGAR EL PERSONAJE 3D
+  // 1. CARGAR EL PERSONAJE 3D (la skin la eligió el usuario en la mini-ventana
+  //    al pulsar "Entrar": rol + género guardados en localStorage).
   let personaje: Personaje | null = null;
   try {
-    personaje = await cargarPersonaje(scene);
-    personaje.raiz.position = new BABYLON.Vector3(0, 0, -8);
+    personaje = await cargarPersonaje(scene, obtenerSesion()?.rol ?? "estudiante");
+    personaje.raiz.position = new BABYLON.Vector3(0, SUELO_Y, -8);
 
     // CUERPO DE COLISIÓN DEL PERSONAJE (lo que lleva moveWithCollisions).
     // No usa la geometría del modelo, usa este elipsoide:
-    //   radio (0.55, 2.3, 0.55) + offset (0, 2.6, 0)  =>  ocupa de y=0.30 a y=4.90.
-    // Choca con room (-0.81..10.32) y con los muros invisibles "limite*", pero NO con
-    // la Platform del escenario (top 0.23): así no se atasca en el escalón.
+    //   radio (0.55, 2.3, 0.55) + offset (0, 2.6, 0)  =>  ocupa de SUELO_Y+0.30
+    //   (= −0.489) a SUELO_Y+4.90 (= 4.111): casi el cuerpo entero de 1.76 m,
+    //   y con 0.30 de holgura bajo el pie para no engancharse en lajas ni cantos.
+    // Choca con room (-0.81..10.32) y con los muros invisibles "limite*".
     // Mesas, sillas y atril NO pasan por aquí: los resuelve empujarFueraDeObstaculos()
     // porque el motor de colisiones se atasca dentro de las lajas finas (ver ObstaculoSolido).
     personaje.raiz.ellipsoid = new BABYLON.Vector3(0.55, 2.3, 0.55);
@@ -1009,7 +1019,7 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   }
 
   const sueloColision = BABYLON.MeshBuilder.CreateGround("sueloColision", { width: 100, height: 100 }, scene);
-  sueloColision.position = new BABYLON.Vector3(0, 0, 0);
+  sueloColision.position = new BABYLON.Vector3(0, SUELO_Y, 0);
   sueloColision.checkCollisions = true;
   sueloColision.isVisible = false;
 
@@ -1093,6 +1103,7 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   // -----------------------------------------------------------------------
   func = crearFuncionalidades({
     escena: scene,
+    sueloY: SUELO_Y,
     camara,
     personaje: () => personaje,
     sillas: () => paresSillas,
@@ -1233,6 +1244,8 @@ const createScene = async function (): Promise<BABYLON.Scene> {
     // partida. De momento solo lo ve el propio jugador (lo pinta la barra).
     if (accion === "emote") {
       console.log("Emote:", detalle);
+      // 👋 además de pintarse en la barra, mueve el brazo del personaje 3.5 s.
+      if (detalle === "👋") func.saludar();
     }
   }
 

@@ -39,6 +39,25 @@ const CLAVE_CUENTAS = "usta_metaverso_cuentas";
 const CLAVE_CLASES = "usta_metaverso_clases";
 const CLAVE_SESION = "usta_metaverso_sesion";
 
+// ---------- Preferencia de avatar ----------
+// Qué cuerpo usa la persona dentro del salón ("mujer" u "hombre"). La elige el
+// usuario en Ajustes del dashboard y la lee personaje.ts al cargar el modelo:
+// el rol de la sesión decide el CONJUNTO (estudiante / docente) y esta
+// preferencia, la variante dentro del conjunto.
+export type GeneroAvatar = "mujer" | "hombre";
+
+const CLAVE_AVATAR = "usta_metaverso_avatar";
+
+/** Preferencia guardada; "mujer" la primera vez. */
+export function obtenerGeneroAvatar(): GeneroAvatar {
+  const guardado = localStorage.getItem(CLAVE_AVATAR);
+  return guardado === "hombre" ? "hombre" : "mujer";
+}
+
+export function guardarGeneroAvatar(genero: GeneroAvatar): void {
+  localStorage.setItem(CLAVE_AVATAR, genero);
+}
+
 // ---------- Cuentas ----------
 export function obtenerCuentas(): Cuenta[] {
   const datos = localStorage.getItem(CLAVE_CUENTAS);
