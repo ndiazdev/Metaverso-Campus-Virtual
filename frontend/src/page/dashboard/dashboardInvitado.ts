@@ -12,8 +12,14 @@
 // ============================================================
 
 import type { Cuenta, Clase } from "../../state/estado";
-import { IMAGENES_ROL, ETIQUETAS_ROL } from "./dashboardComun";
+import {
+  avatarDe,
+  etiquetaRol,
+  fechaCorta,
+} from "./dashboardComun";
+import { montarFiltrosClases } from "./dashboardFiltros";
 import { API_URL } from "../../api/cliente";
+import { t } from "../../state/idioma";
 
 // ============================================================
 // OPCIONES DEL DASHBOARD INVITADO
@@ -44,7 +50,7 @@ export async function mostrarDashboardInvitado(
 
   contenido.innerHTML = `
     <div class="dash-cargando">
-      Cargando clases desde la base de datos...
+      ${t("estudiante.cargando")}
     </div>
   `;
 
@@ -72,98 +78,157 @@ export async function mostrarDashboardInvitado(
   // MOSTRAR DASHBOARD
   // ==========================================================
 
+  const docentes = new Set(
+    misClases
+      .map((clase) => clase.nombreDocente)
+      .filter((nombre) => nombre),
+  ).size;
+
   contenido.innerHTML = `
 
-    <div class="dash-cuerpo">
+    <div class="dash-cabecera">
 
-      <!-- ==================================================
-           COLUMNA IZQUIERDA
-           ================================================== -->
-
-      <div class="dash-columna-izq">
-
-        <div class="dash-etiqueta-rol">
-          ${ETIQUETAS_ROL[cuenta.rol]}
-        </div>
-
-
-        <p class="dash-nombre-usuario">
+      <div>
+        <p class="dash-cabecera-etiqueta">${etiquetaRol(cuenta.rol)}</p>
+        <h1 class="dash-cabecera-titulo">
           ${cuenta.nombreCompleto.split(" ")[0]}
+        </h1>
+        <p class="dash-cabecera-subtitulo">
+          ${misClases.length}
+          ${
+            misClases.length === 1
+              ? t("estudiante.claseInscrita")
+              : t("estudiante.clasesInscritas")
+          }
         </p>
+      </div>
 
-
-        <img
-          class="dash-avatar-img"
-          src="${IMAGENES_ROL[cuenta.rol]}"
-          alt="Avatar"
-        />
-
-
+      <div class="dash-cabecera-acciones">
         <button
           class="dash-boton-principal"
           id="botonAccionPrincipal"
         >
-          Unirse a Clase
+          <i class="fa-solid fa-plus"></i>
+          ${t("estudiante.unirseClase")}
         </button>
 
-
-        <p class="dash-contador">
-          ● 47 usuarios conectados
-        </p>
-
+        <img
+          class="dash-avatar-mini"
+          src="${avatarDe(cuenta)}"
+          alt="${t("comun.avatar")}"
+        />
       </div>
 
+    </div>
 
-      <!-- ==================================================
-           COLUMNA DERECHA
-           ================================================== -->
+    <div class="dash-grid dash-grid-stats">
 
-      <div class="dash-columna-der">
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-graduation-cap"></i>
+          </span>
+          <span class="dash-stat-numero">${misClases.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("estudiante.statClases")}</div>
+      </div>
 
-        <p class="dash-seccion-titulo">
-          Mis clases inscritas
-        </p>
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-chalkboard-user"></i>
+          </span>
+          <span class="dash-stat-numero">${docentes}</span>
+        </div>
+        <div class="dash-stat-etiqueta">
+          ${
+            docentes === 1
+              ? t("estudiante.docente")
+              : t("estudiante.docentes")
+          }
+        </div>
+      </div>
 
+    </div>
 
-        <div id="listaClases">
+    <div class="dash-card">
+
+      <div class="dash-card-encabezado">
+        <p class="dash-card-titulo">${t("estudiante.misClases")}</p>
+        <div class="dash-card-herramientas" id="herramientasClases"></div>
+      </div>
+
+      <div class="dash-lista" id="listaClases">
 
           ${
             misClases.length === 0
               ? `
-                <p class="dash-sin-clases">
-                  Todavía no tienes clases inscritas.
+                <p class="dash-vacio">
+                  ${t("estudiante.vacio")}
                 </p>
               `
               : misClases
                   .map(
                     (clase) => `
 
-                      <div class="dash-tarjeta-clase">
+                      <div
+                        class="dash-tarjeta-clase"
+                        data-buscar="${clase.materia} ${clase.codigo} ${clase.nombreDocente || ""}"
+                      >
 
-                        <div>
+                        <div class="dash-clase-datos">
 
-                          <p class="dash-clase-nombre">
-                            ${clase.materia}
-                          </p>
+                          <span class="dash-clase-icono">
+                            <i class="fa-solid fa-graduation-cap"></i>
+                          </span>
 
+                          <div class="dash-clase-texto">
 
-                          <p class="dash-clase-meta">
-                            ${clase.codigo}
-                            ${
-                              clase.nombreDocente
-                                ? " · " + clase.nombreDocente
-                                : ""
-                            }
-                          </p>
+                            <p class="dash-clase-nombre">
+                              ${clase.materia}
+                            </p>
+
+                            <p class="dash-clase-meta">
+
+                              <span class="dash-dato">
+                                <i class="fa-solid fa-hashtag"></i>
+                                <span class="dash-codigo">${clase.codigo}</span>
+                              </span>
+
+                              ${
+                                clase.nombreDocente
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-chalkboard-user"></i>
+                                      ${clase.nombreDocente}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                              ${
+                                fechaCorta(clase.fechaCreacion)
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-calendar"></i>
+                                      ${fechaCorta(clase.fechaCreacion)}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                            </p>
+
+                          </div>
 
                         </div>
-
 
                         <button
                           class="dash-boton-entrar"
                           data-codigo="${clase.codigo}"
                         >
-                          Entrar
+                          ${t("estudiante.entrar")}
+                          <i class="fa-solid fa-arrow-right"></i>
                         </button>
 
                       </div>
@@ -175,45 +240,15 @@ export async function mostrarDashboardInvitado(
 
         </div>
 
-
-        <!-- ==================================================
-             ESTADÍSTICAS
-             ================================================== -->
-
-        <div class="dash-stats">
-
-          <div class="dash-stat">
-
-            <div class="dash-stat-numero">
-              ${misClases.length}
-            </div>
-
-            <div class="dash-stat-etiqueta">
-              Clases inscritas
-            </div>
-
-          </div>
-
-
-          <div class="dash-stat">
-
-            <div class="dash-stat-numero">
-              47
-            </div>
-
-            <div class="dash-stat-etiqueta">
-              Usuarios conectados
-            </div>
-
-          </div>
-
-        </div>
-
       </div>
 
-    </div>
-
   `;
+
+  // ==========================================================
+  // BUSCADOR DE CLASES
+  // ==========================================================
+
+  montarFiltrosClases(contenido, t("estudiante.buscarClase"));
 
   // ==========================================================
   // BOTONES "ENTRAR"
@@ -271,19 +306,19 @@ export async function mostrarDashboardInvitado(
       <div class="dash-modal">
 
         <h3>
-          Unirse a una clase
+          ${t("estudiante.modalTitulo")}
         </h3>
 
 
         <p>
-          Escribe el código que te dio tu docente
+          ${t("estudiante.modalAyuda")}
         </p>
 
 
         <input
           class="dash-input-codigo"
           id="campoCodigoUnirse"
-          placeholder="EJ: CAL-123"
+          placeholder="${t("estudiante.modalPlaceholder")}"
         />
 
 
@@ -297,7 +332,7 @@ export async function mostrarDashboardInvitado(
           class="dash-boton-principal"
           id="botonConfirmarUnirse"
         >
-          Inscribirme
+          ${t("estudiante.inscribirme")}
         </button>
 
       </div>
@@ -332,7 +367,7 @@ export async function mostrarDashboardInvitado(
       // ----------------------------------------------------
 
       if (!codigo) {
-        errorModal.textContent = "Ingresa un código válido.";
+        errorModal.textContent = t("estudiante.errorCodigo");
 
         return;
       }
@@ -343,7 +378,7 @@ export async function mostrarDashboardInvitado(
 
       botonConfirmar.disabled = true;
 
-      botonConfirmar.textContent = "Uniéndote...";
+      botonConfirmar.textContent = t("estudiante.uniendote");
 
       try {
         // ==================================================
@@ -371,11 +406,12 @@ export async function mostrarDashboardInvitado(
         // ==================================================
 
         if (!res.ok) {
-          errorModal.textContent = data.error || "Código no encontrado.";
+          errorModal.textContent =
+            data.error || t("estudiante.errorNoEncontrado");
 
           botonConfirmar.disabled = false;
 
-          botonConfirmar.textContent = "Inscribirme";
+          botonConfirmar.textContent = t("estudiante.inscribirme");
 
           return;
         }
@@ -392,11 +428,11 @@ export async function mostrarDashboardInvitado(
       } catch (error) {
         console.error("Error al inscribirse a la clase:", error);
 
-        errorModal.textContent = "No se pudo conectar con el servidor.";
+        errorModal.textContent = t("perfil.msg.sinServidor");
 
         botonConfirmar.disabled = false;
 
-        botonConfirmar.textContent = "Inscribirme";
+        botonConfirmar.textContent = t("estudiante.inscribirme");
       }
     });
   }

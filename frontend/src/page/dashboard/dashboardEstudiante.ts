@@ -4,8 +4,14 @@
 // ============================================================
 
 import type { Cuenta, Clase } from "../../state/estado";
-import { IMAGENES_ROL, ETIQUETAS_ROL } from "./dashboardComun";
+import {
+  avatarDe,
+  etiquetaRol,
+  fechaCorta,
+} from "./dashboardComun";
+import { montarFiltrosClases } from "./dashboardFiltros";
 import { API_URL } from "../../api/cliente";
+import { t } from "../../state/idioma";
 
 export interface DashboardEstudianteOpciones {
   cuenta: Cuenta & { id?: number };
@@ -19,7 +25,7 @@ export async function mostrarDashboardEstudiante(
 ): Promise<void> {
   const { cuenta, contenido, overlay, alEntrarAClase } = opciones;
 
-  contenido.innerHTML = `<div class="dash-cargando">Cargando clases desde la base de datos...</div>`;
+  contenido.innerHTML = `<div class="dash-cargando">${t("estudiante.cargando")}</div>`;
 
   let misClases: Clase[] = [];
 
@@ -33,51 +39,154 @@ export async function mostrarDashboardEstudiante(
     console.error("Error al consultar clases del estudiante:", error);
   }
 
+  const docentes = new Set(
+    misClases
+      .map((clase) => clase.nombreDocente)
+      .filter((nombre) => nombre),
+  ).size;
+
   contenido.innerHTML = `
-    <div class="dash-cuerpo">
-      <div class="dash-columna-izq">
-        <div class="dash-etiqueta-rol">${ETIQUETAS_ROL[cuenta.rol]}</div>
-        <p class="dash-nombre-usuario">${cuenta.nombreCompleto.split(" ")[0]}</p>
-        <img class="dash-avatar-img" src="${IMAGENES_ROL[cuenta.rol]}" alt="Avatar" />
-        <button class="dash-boton-principal" id="botonAccionPrincipal">Unirse a Clase</button>
-        <p class="dash-contador">● 47 usuarios conectados</p>
+
+    <div class="dash-cabecera">
+
+      <div>
+        <p class="dash-cabecera-etiqueta">${etiquetaRol(cuenta.rol)}</p>
+        <h1 class="dash-cabecera-titulo">
+          ${cuenta.nombreCompleto.split(" ")[0]}
+        </h1>
+        <p class="dash-cabecera-subtitulo">
+          ${misClases.length}
+          ${
+            misClases.length === 1
+              ? t("estudiante.claseInscrita")
+              : t("estudiante.clasesInscritas")
+          }
+        </p>
       </div>
 
-      <div class="dash-columna-der">
-        <p class="dash-seccion-titulo">Mis clases inscritas</p>
-        <div id="listaClases">
+      <div class="dash-cabecera-acciones">
+        <button class="dash-boton-principal" id="botonAccionPrincipal">
+          <i class="fa-solid fa-plus"></i>
+          ${t("estudiante.unirseClase")}
+        </button>
+        <img class="dash-avatar-mini" src="${avatarDe(cuenta)}" alt="${t("comun.avatar")}" />
+      </div>
+
+    </div>
+
+    <div class="dash-grid dash-grid-stats">
+
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-graduation-cap"></i>
+          </span>
+          <span class="dash-stat-numero">${misClases.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("estudiante.statClases")}</div>
+      </div>
+
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-chalkboard-user"></i>
+          </span>
+          <span class="dash-stat-numero">${docentes}</span>
+        </div>
+        <div class="dash-stat-etiqueta">
+          ${
+            docentes === 1
+              ? t("estudiante.docente")
+              : t("estudiante.docentes")
+          }
+        </div>
+      </div>
+
+    </div>
+
+    <div class="dash-card">
+
+      <div class="dash-card-encabezado">
+        <p class="dash-card-titulo">${t("estudiante.misClases")}</p>
+        <div class="dash-card-herramientas" id="herramientasClases"></div>
+      </div>
+
+      <div class="dash-lista" id="listaClases">
           ${
             misClases.length === 0
-              ? `<p class="dash-sin-clases">Todavía no tienes clases inscritas.</p>`
+              ? `<p class="dash-vacio">${t("estudiante.vacio")}</p>`
               : misClases
                   .map(
                     (clase) => `
-                <div class="dash-tarjeta-clase">
-                  <div>
-                    <p class="dash-clase-nombre">${clase.materia}</p>
-                    <p class="dash-clase-meta">${clase.codigo}${clase.nombreDocente ? " · " + clase.nombreDocente : ""}</p>
-                  </div>
-                  <button class="dash-boton-entrar" data-codigo="${clase.codigo}">Entrar</button>
-                </div>
+                      <div
+                        class="dash-tarjeta-clase"
+                        data-buscar="${clase.materia} ${clase.codigo} ${clase.nombreDocente || ""}"
+                      >
+
+                        <div class="dash-clase-datos">
+
+                          <span class="dash-clase-icono">
+                            <i class="fa-solid fa-graduation-cap"></i>
+                          </span>
+
+                          <div class="dash-clase-texto">
+
+                            <p class="dash-clase-nombre">${clase.materia}</p>
+
+                            <p class="dash-clase-meta">
+
+                              <span class="dash-dato">
+                                <i class="fa-solid fa-hashtag"></i>
+                                <span class="dash-codigo">${clase.codigo}</span>
+                              </span>
+
+                              ${
+                                clase.nombreDocente
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-chalkboard-user"></i>
+                                      ${clase.nombreDocente}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                              ${
+                                fechaCorta(clase.fechaCreacion)
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-calendar"></i>
+                                      ${fechaCorta(clase.fechaCreacion)}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                            </p>
+
+                          </div>
+
+                        </div>
+
+                        <button
+                          class="dash-boton-entrar"
+                          data-codigo="${clase.codigo}"
+                        >
+                          ${t("estudiante.entrar")}
+                          <i class="fa-solid fa-arrow-right"></i>
+                        </button>
+
+                      </div>
               `
                   )
                   .join("")
           }
         </div>
 
-        <div class="dash-stats">
-          <div class="dash-stat">
-            <div class="dash-stat-numero">${misClases.length}</div>
-            <div class="dash-stat-etiqueta">Clases inscritas</div>
-          </div>
-          <div class="dash-stat">
-            <div class="dash-stat-numero">47</div>
-            <div class="dash-stat-etiqueta">Usuarios conectados</div>
-          </div>
-        </div>
-      </div>
     </div>
   `;
+
+  montarFiltrosClases(contenido, t("estudiante.buscarClase"));
 
   contenido.querySelectorAll<HTMLButtonElement>(".dash-boton-entrar").forEach((boton) => {
     boton.addEventListener("click", () => {
@@ -99,11 +208,11 @@ export async function mostrarDashboardEstudiante(
     modal.className = "dash-modal-fondo";
     modal.innerHTML = `
       <div class="dash-modal">
-        <h3>Unirse a una clase</h3>
-        <p>Escribe el código que te dio tu docente</p>
-        <input class="dash-input-codigo" id="campoCodigoUnirse" placeholder="EJ: CAL-123" />
+        <h3>${t("estudiante.modalTitulo")}</h3>
+        <p>${t("estudiante.modalAyuda")}</p>
+        <input class="dash-input-codigo" id="campoCodigoUnirse" placeholder="${t("estudiante.modalPlaceholder")}" />
         <p class="dash-error" id="errorModal"></p>
-        <button class="dash-boton-principal" id="botonConfirmarUnirse">Inscribirme</button>
+        <button class="dash-boton-principal" id="botonConfirmarUnirse">${t("estudiante.inscribirme")}</button>
       </div>
     `;
     document.body.appendChild(modal);
@@ -115,12 +224,12 @@ export async function mostrarDashboardEstudiante(
     botonConfirmar.addEventListener("click", async () => {
       const codigo = campoCodigo.value.trim().toUpperCase();
       if (!codigo) {
-        errorModal.textContent = "Ingresa un código válido.";
+        errorModal.textContent = t("estudiante.errorCodigo");
         return;
       }
 
       botonConfirmar.disabled = true;
-      botonConfirmar.textContent = "Uniéndote...";
+      botonConfirmar.textContent = t("estudiante.uniendote");
 
       try {
         const res = await fetch(`${API_URL}/inscripciones`, {
@@ -132,9 +241,10 @@ export async function mostrarDashboardEstudiante(
         const data = await res.json();
 
         if (!res.ok) {
-          errorModal.textContent = data.error || "Código no encontrado.";
+          errorModal.textContent =
+            data.error || t("estudiante.errorNoEncontrado");
           botonConfirmar.disabled = false;
-          botonConfirmar.textContent = "Inscribirme";
+          botonConfirmar.textContent = t("estudiante.inscribirme");
           return;
         }
 
@@ -142,9 +252,9 @@ export async function mostrarDashboardEstudiante(
         // Refresca la lista de clases inscritas para que aparezca la nueva
         mostrarDashboardEstudiante(opciones);
       } catch (error) {
-        errorModal.textContent = "No se pudo conectar con el servidor.";
+        errorModal.textContent = t("perfil.msg.sinServidor");
         botonConfirmar.disabled = false;
-        botonConfirmar.textContent = "Inscribirme";
+        botonConfirmar.textContent = t("estudiante.inscribirme");
       }
     });
   }

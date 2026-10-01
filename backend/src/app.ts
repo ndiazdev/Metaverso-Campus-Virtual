@@ -24,7 +24,7 @@ import { rutasUsuarios } from "./rutas/usuarios";
 export const app = express();
 
 app.use(cors({ origin: ENTORNO.ORIGENES === "*" ? true : ENTORNO.ORIGENES.split(",") }));
-app.use(express.json());
+app.use(express.json({ limit: "2mb" }));
 
 // ------------------------------------------------------
 // 1) API — las funcionalidades del backend

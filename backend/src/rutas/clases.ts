@@ -98,6 +98,61 @@ rutasClases.post("/", async (req, res) => {
 });
 
 // ------------------------------------------------------
+// UNA CLASE POR CÓDIGO
+// ------------------------------------------------------
+// Es lo que hace posible el ENLACE DIRECTO a una clase
+// (localhost:5173/?clase=FIS-101): al abrir esa dirección el
+// frontend pregunta qué clase es y, si tiene permiso, entra
+// sin pasar por el panel. Va al FINAL a propósito: así
+// /docente/... y /estudiante/... ya se han resuelto antes y
+// "docente" nunca se confunde con un código de clase.
+// ------------------------------------------------------
+
+rutasClases.get("/:codigo", async (req, res) => {
+  try {
+    const codigo = String(req.params.codigo || "").trim().toUpperCase();
+
+    const [rows]: any = await db.query(
+      `
+        SELECT
+          c.codigo,
+          c.materia,
+          c.correo_docente AS correoDocente,
+          c.nombre_docente AS nombreDocente,
+          DATE_FORMAT(c.fecha_creacion, '%Y-%m-%d %H:%i') AS fechaCreacion,
+
+          (
+            SELECT COUNT(*)
+            FROM inscripciones i
+            WHERE i.codigo_clase = c.codigo
+          ) AS totalInscritos
+
+        FROM clases c
+
+        WHERE c.codigo = ?
+      `,
+      [codigo]
+    );
+
+    if (!rows || rows.length === 0) {
+      return res.status(404).json({
+        error: `La clase "${codigo}" no existe.`,
+      });
+    }
+
+    return res.json(rows[0]);
+  } catch (error) {
+    console.error("❌ ERROR /api/clases/:codigo:");
+    console.error(error);
+
+    return res.status(500).json({
+      error: "Error al consultar la clase",
+      detalle: error instanceof Error ? error.message : String(error),
+    });
+  }
+});
+
+// ------------------------------------------------------
 // CLASES DEL DOCENTE
 // ------------------------------------------------------
 
@@ -106,11 +161,19 @@ rutasClases.get("/docente/:correo", async (req, res) => {
     const [rows]: any = await db.query(
       `
           SELECT
-            id,
-            codigo,
-            materia
-          FROM clases
-          WHERE correo_docente = ?
+            c.id,
+            c.codigo,
+            c.materia,
+            c.fecha_creacion AS fechaCreacion,
+
+            (
+              SELECT COUNT(*)
+              FROM inscripciones i
+              WHERE i.codigo_clase = c.codigo
+            ) AS totalInscritos
+
+          FROM clases c
+          WHERE c.correo_docente = ?
         `,
       [req.params.correo]
     );
@@ -137,6 +200,7 @@ rutasClases.get("/estudiante/:correo", async (req, res) => {
           c.id,
           c.codigo,
           c.materia,
+          c.fecha_creacion AS fechaCreacion,
           c.nombre_docente AS nombreDocente
 
         FROM inscripciones i

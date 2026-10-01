@@ -1,4 +1,9 @@
 import "../assets/style.css";
+import { inyectarTema as montarTema } from "../state/preferencias";
+
+// El tema (claro/oscuro) y el idioma se aplican apenas carga la
+// página, antes de que se pinte el login o el metaverso.
+montarTema();
 import * as BABYLON from "babylonjs";
 import "babylonjs-loaders";
 import { iniciarLogin } from "../page/login/login";
@@ -6,6 +11,11 @@ import { mostrarDashboard } from "../page/dashboard/dashboard";
 import { obtenerSesion } from "../state/estado";
 import type { Clase } from "../state/estado";
 import { cargarPersonaje, type Personaje } from "./personaje";
+import { crearAvataresRemotos, type AvataresRemotos } from "./avataresRemotos";
+import { crearListadoConectados, type ListadoConectados } from "../ui/listadoConectados";
+import { leerClaseDeLaUrl, escribirClaseEnLaUrl } from "../state/enlaceClase";
+import { obtenerClasePorCodigo } from "../api/servicios";
+import type { EstadoLocal, Participante } from "../red/presencia";
 // UI MODULAR: se importa como cualquier otra pieza, así cada mapa nuevo reutiliza
 // los mismos botones sin reescribirlos.
 import { crearMenuAjustes, leerVolumen, guardarVolumen, type MenuAjustes } from "../ui/menuAjustes";
@@ -932,6 +942,11 @@ let volumenAntesDeSilenciar: number | null = null;
 // al volver a entrar, no se registren los mismos listeners otra vez.
 const limpiadoresDePartida: Array<() => void> = [];
 
+// Código de la clase en la que se está jugando ahora mismo. Lo necesita el
+// módulo de presencia (para meterse en la sala "clase:CODIGO") y la píldora de
+// conectados, que lo enseña arriba a la izquierda.
+let claseActiva = "";
+
 /**
  * VOLUMEN DE LA APP: manda sobre todo lo que suena DENTRO del metaverso — el vídeo
  * del tablero, YouTube, la pantalla compartida y, cuando llegue el chat por
@@ -1142,6 +1157,62 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   }
 
   // -----------------------------------------------------------------------
+  // PRESENCIA: LOS DEMÁS MIEMBROS DE LA CLASE
+  // (src/3d/avataresRemotos.ts dibuja y mueve los cuerpos; src/red/presencia.ts
+  // habla con el servidor y filtra qué se envía). Aquí solo se le pasa el estado
+  // del avatar local y se pinta lo que llega en la píldora de conectados.
+  // -----------------------------------------------------------------------
+  let listado: ListadoConectados | null = null;
+  let remotos: AvataresRemotos | null = null;
+
+  /**
+   * Lo que se publica de MI avatar: dónde estoy y qué estoy haciendo.
+   * El rumbo se toma de la cámara, que es la que mira a dónde andas (la cámara
+   * va pegada al cuerpo en 3ª persona y por encima de los ojos en 1ª).
+   */
+  function estadoLocal(): EstadoLocal {
+    const pos = personaje?.raiz.position ?? new BABYLON.Vector3(0, SUELO_Y, -8);
+    const estado = func.estado();
+    return {
+      x: pos.x,
+      y: pos.y,
+      z: pos.z,
+      yaw: camara.rotation.y,
+      sentado: estado.sentado,
+      enAtril: func.enElAtril(),
+      manoAlzada: estado.manoAlzada,
+    };
+  }
+
+  // La píldora se crea antes que la presencia: así, el primer mensaje del
+  // servidor (que puede llegar en el mismo frame) ya tiene dónde pintarse.
+  listado = crearListadoConectados(claseActiva);
+
+  remotos = crearAvataresRemotos({
+    escena: scene,
+    clase: claseActiva,
+    sueloY: SUELO_Y,
+    personaje: () => personaje,
+    estadoLocal,
+    alCambiarParticipantes: (participantes: Participante[], miId: string | null) => {
+      listado?.reflejar(participantes, miId);
+    },
+    alCambiarConexion: (estado, detalle) => {
+      listado?.reflejarConexion(estado, detalle);
+      // La lista puede llegar antes que la confirmación de entrada, así que el
+      // "(tú)" no siempre sale en la primera pintada: al conectar se repinta.
+      if (estado === "conectado") {
+        listado?.reflejar(remotos?.participantes() ?? [], remotos?.miId() ?? null);
+      }
+    },
+    alRechazar: (motivo) => {
+      listado?.avisar(motivo);
+      barra?.mostrarGlobo(motivo);
+    },
+    limpiadores: limpiadoresDePartida,
+  });
+
+  // -----------------------------------------------------------------------
   // SALIR DE LA CLASE / PARTIDA → vuelve al panel con el que iniciaste sesión
   // -----------------------------------------------------------------------
   function salirDeLaPartida(): void {
@@ -1151,6 +1222,7 @@ const createScene = async function (): Promise<BABYLON.Scene> {
     barra?.destruir();
     // La webcam también: si no, el piloto de la cámara seguiría encendido.
     camaraWeb?.destruir();
+    listado?.destruir();
     // Retira también el menú del tablero y, sobre todo, PARA la captura de
     // pantalla: si no, el navegador seguiría grabando tras salir de la clase.
     tablero?.destruir();
@@ -1158,6 +1230,8 @@ const createScene = async function (): Promise<BABYLON.Scene> {
     barra = null;
     tablero = null;
     camaraWeb = null;
+    listado = null;
+    remotos = null;
 
     // Mano alzada, su temporizador y los avisos: los limpia el módulo de
     // funcionalidades, el mismo que los cableó al entrar en la clase.
@@ -1168,6 +1242,12 @@ const createScene = async function (): Promise<BABYLON.Scene> {
 
     liberarMicrofono();
     if (document.pointerLockElement) document.exitPointerLock();
+
+    // La clase se borra de la dirección: si no, al volver al panel y pulsar
+    // otra vez en la misma clase, entraría por el enlace viejo en vez de por
+    // el botón. El enlace se vuelve a escribir al entrar (ver entrarAlSalon).
+    escribirClaseEnLaUrl(null);
+    claseActiva = "";
 
     scene.dispose();
 
@@ -1326,7 +1406,12 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   return scene;
 };
 
-function entrarAlSalon(_clase: Clase) {
+function entrarAlSalon(clase: Clase) {
+  claseActiva = clase.codigo;
+  // La dirección pasa a ser la de esta clase: es lo que permite copiar el
+  // enlace del navegador y pasárselo a otro para que entre a la MISMA.
+  escribirClaseEnLaUrl(clase.codigo);
+
   const alRedimensionar = () => engine.resize();
   window.addEventListener("resize", alRedimensionar);
   limpiadoresDePartida.push(() => window.removeEventListener("resize", alRedimensionar));
@@ -1341,11 +1426,54 @@ function entrarAlSalon(_clase: Clase) {
     });
 }
 
-const sesionActiva = obtenerSesion();
-if (sesionActiva) {
-  mostrarDashboard(sesionActiva, entrarAlSalon);
-} else {
-  iniciarLogin((cuenta) => {
-    mostrarDashboard(cuenta, entrarAlSalon);
-  });
+// -----------------------------------------------------------------------
+// ENTRAR POR ENLACE  →  http://localhost:5173/?clase=FIS-101
+// -----------------------------------------------------------------------
+// Si la dirección trae el código de una clase, se entra directamente en ella
+// en lugar de mostrar el panel. Se pregunta a la API de qué clase se trata (el
+// código solo no dice ni la materia ni el docente) y se entra. Devuelve false
+// si no había enlace o la clase ya no existe, para que el llamante abra el
+// panel con normalidad.
+async function entrarPorEnlace(): Promise<boolean> {
+  const codigo = leerClaseDeLaUrl();
+  if (!codigo) return false;
+
+  let clase: Clase | null = null;
+  try {
+    clase = await obtenerClasePorCodigo(codigo);
+  } catch (error) {
+    console.error("No se pudo consultar la clase del enlace:", error);
+  }
+
+  if (!clase) {
+    aviso.textContent = `La clase ${codigo} no existe o el servidor no está disponible.`;
+    aviso.style.display = "block";
+    window.setTimeout(() => {
+      aviso.style.display = "none";
+    }, 4000);
+    // Se quita el enlace de la dirección para no repetir el error al recargar.
+    escribirClaseEnLaUrl(null);
+    return false;
+  }
+
+  entrarAlSalon(clase);
+  return true;
 }
+
+// Si no hay sesión se pide el login primero, y solo después se mira el enlace:
+// así un enlace recibido por WhatsApp funciona aunque no se esté conectado.
+async function arrancar(): Promise<void> {
+  const sesion = obtenerSesion();
+  if (!sesion) {
+    iniciarLogin((cuenta) => {
+      void entrarPorEnlace().then((entro) => {
+        if (!entro) mostrarDashboard(cuenta, entrarAlSalon);
+      });
+    });
+    return;
+  }
+  const entro = await entrarPorEnlace();
+  if (!entro) mostrarDashboard(sesion, entrarAlSalon);
+}
+
+void arrancar();

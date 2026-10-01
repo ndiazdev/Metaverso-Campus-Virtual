@@ -30,6 +30,7 @@ rutasAuth.post("/login", async (req, res) => {
         rol,
         carrera,
         materia,
+        foto,
         contrasena_hash
       FROM cuentas
       WHERE correo = ?

@@ -1,6 +1,12 @@
 import type { Cuenta, Clase } from "../../state/estado";
-import { IMAGENES_ROL, ETIQUETAS_ROL } from "./dashboardComun";
+import {
+  avatarDe,
+  etiquetaRol,
+  fechaCorta,
+} from "./dashboardComun";
+import { montarFiltros, montarFiltrosClases, montarTabla } from "./dashboardFiltros";
 import { API_URL } from "../../api/cliente";
+import { t } from "../../state/idioma";
 
 export interface DashboardAdminOpciones {
   cuenta: Cuenta & { id?: number };
@@ -31,11 +37,11 @@ export async function mostrarDashboardAdmin(
 
   contenido.innerHTML = `
     <div class="dash-cargando">
-      Cargando tus clases...
+      ${t("admin.cargando")}
     </div>
   `;
 
-  let misClases: Clase[] = [];
+  let misClases: Array<Clase & { totalInscritos?: number }> = [];
 
   try {
     const endpoint = `${API_URL}/clases/docente/${encodeURIComponent(
@@ -51,67 +57,146 @@ export async function mostrarDashboardAdmin(
     console.error("Error al consultar las clases del administrador:", error);
   }
 
+  const totalInscritos = misClases.reduce(
+    (suma, clase) => suma + (clase.totalInscritos || 0),
+    0,
+  );
+
+  const hayInscritos = misClases.some(
+    (clase) => typeof clase.totalInscritos === "number",
+  );
+
   contenido.innerHTML = `
-    <div class="dash-cuerpo">
 
-      <div class="dash-columna-izq">
+    <div class="dash-cabecera">
 
-        <div class="dash-etiqueta-rol">
-          ${ETIQUETAS_ROL[cuenta.rol]}
-        </div>
-
-        <p class="dash-nombre-usuario">
+      <div>
+        <p class="dash-cabecera-etiqueta">${etiquetaRol(cuenta.rol)}</p>
+        <h1 class="dash-cabecera-titulo">
           ${cuenta.nombreCompleto.split(" ")[0]}
+        </h1>
+        <p class="dash-cabecera-subtitulo">
+          ${misClases.length}
+          ${misClases.length === 1 ? t("admin.claseCreada") : t("admin.clasesCreadas")}
         </p>
+      </div>
 
-        <img
-          class="dash-avatar-img"
-          src="${IMAGENES_ROL[cuenta.rol]}"
-          alt="Avatar"
-        />
-
+      <div class="dash-cabecera-acciones">
         <button
           class="dash-boton-principal"
           id="botonAccionPrincipal"
         >
-          Crear Clase
+          <i class="fa-solid fa-plus"></i>
+          ${t("admin.nuevaClase")}
         </button>
 
-        <p class="dash-contador">
-          ● 47 usuarios conectados
-        </p>
-
+        <img
+          class="dash-avatar-mini"
+          src="${avatarDe(cuenta)}"
+          alt="${t("comun.avatar")}"
+        />
       </div>
 
-      <div class="dash-columna-der">
+    </div>
 
-        <p class="dash-seccion-titulo">
-          Mis clases creadas
-        </p>
+    <div class="dash-grid dash-grid-stats">
 
-        <div id="listaClases">
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-graduation-cap"></i>
+          </span>
+          <span class="dash-stat-numero">${misClases.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("admin.statClases")}</div>
+      </div>
+
+      ${
+        hayInscritos
+          ? `
+            <div class="dash-stat">
+              <div class="dash-stat-cabecera">
+                <span class="dash-stat-icono">
+                  <i class="fa-solid fa-user-group"></i>
+                </span>
+                <span class="dash-stat-numero">${totalInscritos}</span>
+              </div>
+              <div class="dash-stat-etiqueta">${t("admin.statInscritos")}</div>
+            </div>
+          `
+          : ""
+      }
+
+    </div>
+
+    <div class="dash-card">
+
+      <div class="dash-card-encabezado">
+        <p class="dash-card-titulo">${t("admin.misClases")}</p>
+        <div class="dash-card-herramientas" id="herramientasClases"></div>
+      </div>
+
+      <div class="dash-lista" id="listaClases">
 
           ${
             misClases.length === 0
               ? `
-                <p class="dash-sin-clases">
-                  Todavía no tienes clases creadas.
+                <p class="dash-vacio">
+                  ${t("admin.sinClases")}
                 </p>
               `
               : misClases
                   .map(
                     (clase) => `
-                      <div class="dash-tarjeta-clase">
+                      <div
+                        class="dash-tarjeta-clase"
+                        data-buscar="${clase.materia} ${clase.codigo}"
+                      >
 
-                        <div>
+                        <div class="dash-clase-datos">
 
-                          <p class="dash-clase-nombre">
-                            ${clase.materia}
-                          </p>
+                          <span class="dash-clase-icono">
+                            <i class="fa-solid fa-graduation-cap"></i>
+                          </span>
 
-                          <p class="dash-clase-meta">
-                            ${clase.codigo}
-                          </p>
+                          <div class="dash-clase-texto">
+
+                            <p class="dash-clase-nombre">
+                              ${clase.materia}
+                            </p>
+
+                            <p class="dash-clase-meta">
+
+                              <span class="dash-dato">
+                                <i class="fa-solid fa-hashtag"></i>
+                                <span class="dash-codigo">${clase.codigo}</span>
+                              </span>
+
+                              ${
+                                typeof clase.totalInscritos === "number"
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-user-group"></i>
+                                      ${clase.totalInscritos} ${t("admin.inscritos")}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                              ${
+                                fechaCorta(clase.fechaCreacion)
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-calendar"></i>
+                                      ${fechaCorta(clase.fechaCreacion)}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                            </p>
+
+                          </div>
 
                         </div>
 
@@ -119,7 +204,8 @@ export async function mostrarDashboardAdmin(
                           class="dash-boton-entrar"
                           data-codigo="${clase.codigo}"
                         >
-                          Abrir
+                          ${t("admin.abrir")}
+                          <i class="fa-solid fa-arrow-right"></i>
                         </button>
 
                       </div>
@@ -130,38 +216,14 @@ export async function mostrarDashboardAdmin(
 
         </div>
 
-        <div class="dash-stats">
-
-          <div class="dash-stat">
-
-            <div class="dash-stat-numero">
-              ${misClases.length}
-            </div>
-
-            <div class="dash-stat-etiqueta">
-              Clases creadas
-            </div>
-
-          </div>
-
-          <div class="dash-stat">
-
-            <div class="dash-stat-numero">
-              47
-            </div>
-
-            <div class="dash-stat-etiqueta">
-              Usuarios conectados
-            </div>
-
-          </div>
-
-        </div>
-
-      </div>
-
     </div>
   `;
+
+  // ==========================================================
+  // BUSCADOR DE CLASES
+  // ==========================================================
+
+  montarFiltrosClases(contenido, t("admin.buscarClase"));
 
   contenido
     .querySelectorAll<HTMLButtonElement>(".dash-boton-entrar")
@@ -202,21 +264,17 @@ export async function mostrarDashboardAdmin(
       <div class="dash-modal">
 
         <h3>
-          Crear nueva clase
+          ${t("admin.crearTitulo")}
         </h3>
 
         <p>
-          Escribe la materia que vas a dictar
+          ${t("admin.crearTexto")}
         </p>
 
         <input
-          class="dash-input-codigo"
+          class="dash-input-codigo dash-input-texto"
           id="campoMateriaNueva"
-          placeholder="Ej: Cálculo II"
-          style="
-            text-transform:none;
-            letter-spacing:normal;
-          "
+          placeholder="${t("admin.placeholderMateria")}"
         />
 
         <p
@@ -228,7 +286,7 @@ export async function mostrarDashboardAdmin(
           class="dash-boton-principal"
           id="botonConfirmarClase"
         >
-          Generar clase
+          ${t("admin.generarClase")}
         </button>
 
       </div>
@@ -258,7 +316,7 @@ export async function mostrarDashboardAdmin(
 
         if (!materia) {
           errorModal.textContent =
-            "Escribe el nombre de la materia.";
+            t("admin.errorMateria");
           return;
         }
 
@@ -275,7 +333,7 @@ export async function mostrarDashboardAdmin(
 
         botonConfirmar.disabled = true;
         botonConfirmar.textContent =
-          "Guardando...";
+          t("admin.guardando");
 
         try {
           const res = await fetch(
@@ -297,7 +355,7 @@ export async function mostrarDashboardAdmin(
 
           if (!res.ok) {
             let mensaje =
-              "Error al guardar la clase.";
+              t("admin.errorGuardar");
 
             try {
               const data = await res.json();
@@ -313,7 +371,7 @@ export async function mostrarDashboardAdmin(
 
             botonConfirmar.disabled = false;
             botonConfirmar.textContent =
-              "Generar clase";
+              t("admin.generarClase");
 
             return;
           }
@@ -322,11 +380,11 @@ export async function mostrarDashboardAdmin(
             <div class="dash-modal">
 
               <h3>
-                ¡Clase creada!
+                ${t("admin.exitoTitulo")}
               </h3>
 
               <p>
-                Comparte este código con tus estudiantes
+                ${t("admin.exitoTexto")}
               </p>
 
               <div class="dash-codigo-grande">
@@ -337,7 +395,7 @@ export async function mostrarDashboardAdmin(
                 class="dash-boton-principal"
                 id="botonEntrarAhora"
               >
-                Entrar a la clase
+                ${t("admin.entrarClase")}
               </button>
 
             </div>
@@ -378,11 +436,11 @@ export async function mostrarDashboardAdmin(
           );
 
           errorModal.textContent =
-            "No se pudo conectar con el servidor.";
+            t("perfil.msg.sinServidor");
 
           botonConfirmar.disabled = false;
           botonConfirmar.textContent =
-            "Generar clase";
+            t("admin.generarClase");
         }
       },
     );
@@ -396,7 +454,7 @@ export async function mostrarUsuariosAdmin(
 
   contenido.innerHTML = `
     <div class="dash-cargando">
-      Cargando información del sistema...
+      ${t("admin.cargandoSistema")}
     </div>
   `;
 
@@ -425,7 +483,7 @@ export async function mostrarUsuariosAdmin(
     );
 
     errorUsuarios =
-      "No se pudieron cargar los usuarios.";
+      t("admin.errorUsuarios");
   }
 
   try {
@@ -445,7 +503,7 @@ export async function mostrarUsuariosAdmin(
     );
 
     errorClases =
-      "No se pudieron cargar las clases.";
+      t("admin.errorClases");
   }
 
   try {
@@ -465,512 +523,441 @@ export async function mostrarUsuariosAdmin(
     );
 
     errorInscripciones =
-      "No se pudieron cargar las inscripciones.";
+      t("admin.errorInscripciones");
   }
 
+  const iniciales = (nombre: string): string =>
+    nombre
+      .trim()
+      .split(/\s+/)
+      .map((parte) => parte.charAt(0))
+      .slice(0, 2)
+      .join("")
+      .toUpperCase();
+
   contenido.innerHTML = `
-    <div
-      style="
-        max-width:1100px;
-        margin:32px auto;
-        padding:0 24px 50px 24px;
-      "
-    >
 
-      <h2
-        style="
-          color:white;
-          margin:0 0 4px 0;
-        "
-      >
-        Panel de administración
-      </h2>
+    <div class="dash-cabecera">
 
-      <p
-        style="
-          color:#9aa8c7;
-          font-size:13px;
-          margin:0 0 28px 0;
-        "
-      >
-        Gestión general del sistema
-      </p>
-
-      <div
-        style="
-          background:rgba(255,255,255,0.04);
-          border-radius:12px;
-          padding:20px 24px;
-          margin-bottom:24px;
-        "
-      >
-
-        <p class="dash-seccion-titulo">
-          Todos los usuarios (${usuarios.length})
+      <div>
+        <p class="dash-cabecera-etiqueta">${t("admin.etiqueta")}</p>
+        <h1 class="dash-cabecera-titulo">${t("admin.panel")}</h1>
+        <p class="dash-cabecera-subtitulo">
+          ${t("admin.subtitulo")}
         </p>
+      </div>
 
-        ${
-          errorUsuarios
-            ? `
-              <p
-                style="
-                  color:#ff6b6b;
-                  font-size:13px;
-                "
-              >
-                ${errorUsuarios}
-              </p>
-            `
-            : ""
-        }
+    </div>
 
-        <div id="listaUsuarios">
+    <div class="dash-grid dash-grid-stats">
+
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-users"></i>
+          </span>
+          <span class="dash-stat-numero">${usuarios.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("comun.nav.usuarios")}</div>
+      </div>
+
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-graduation-cap"></i>
+          </span>
+          <span class="dash-stat-numero">${clases.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("comun.nav.clases")}</div>
+      </div>
+
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-clipboard-check"></i>
+          </span>
+          <span class="dash-stat-numero">${inscripciones.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("admin.inscripciones")}</div>
+      </div>
+
+    </div>
+
+      <div class="dash-grid dash-grid-tarjetas">
+
+      <div class="dash-card">
+
+        <div class="dash-card-encabezado">
+          <p class="dash-card-titulo">${t("comun.nav.usuarios")} (${usuarios.length})</p>
+          <div class="dash-card-herramientas" id="herramientasUsuarios"></div>
+        </div>
 
           ${
-            usuarios.length === 0 &&
-            !errorUsuarios
+            errorUsuarios
               ? `
-                <p class="dash-sin-clases">
-                  No hay usuarios registrados.
+                <p class="dash-error-panel">
+                  ${errorUsuarios}
                 </p>
               `
-              : usuarios
-                  .map(
-                    (u) => `
-                      <div
-                        style="
-                          display:flex;
-                          justify-content:space-between;
-                          align-items:center;
-                          gap:20px;
-                          padding:14px 0;
-                          border-bottom:1px solid rgba(255,255,255,0.06);
-                        "
-                      >
+              : ""
+          }
 
-                        <div>
+          <div class="dash-lista" id="listaUsuarios">
 
-                          <p
-                            style="
-                              color:white;
-                              font-weight:bold;
-                              font-size:14px;
-                              margin:0;
-                            "
-                          >
-                            ${u.nombreCompleto}
-                          </p>
+            ${
+              usuarios.length === 0 &&
+              !errorUsuarios
+                ? `
+                  <p class="dash-vacio">
+                    ${t("admin.sinUsuarios")}
+                  </p>
+                `
+                : `
+                  <div class="dash-lista-cabecera">
+                    <span>
+                      <i class="fa-solid fa-user"></i>
+                      ${t("comun.usuario")}
+                    </span>
+                    <span>
+                      <i class="fa-solid fa-shield-halved"></i>
+                      ${t("perfil.rol")}
+                    </span>
+                  </div>
 
-                          <p
-                            style="
-                              color:#9aa8c7;
-                              font-size:12px;
-                              margin:3px 0 0 0;
-                            "
-                          >
-                            ${u.correo}
-                          </p>
+                  ${usuarios
+                    .map(
+                      (u) => `
+                        <div
+                          class="dash-fila-usuario"
+                          data-buscar="${u.nombreCompleto} ${u.correo} ${u.rol}"
+                          data-grupo="${u.rol === "invitado" ? "estudiante" : u.rol}"
+                        >
+
+                          <div class="dash-usuario-info">
+
+                            <span
+                              class="dash-usuario-avatar rol-${
+                                u.rol === "invitado" ? "estudiante" : u.rol
+                              }"
+                            >
+                              ${iniciales(u.nombreCompleto)}
+                            </span>
+
+                            <div class="dash-usuario-bloque">
+
+                              <p class="dash-usuario-nombre">
+                                ${u.nombreCompleto}
+                              </p>
+
+                              <p class="dash-usuario-correo">
+                                ${u.correo}
+                              </p>
+
+                            </div>
+
+                          </div>
+
+                          <div class="dash-usuario-rol">
+                          ${
+                            u.rol === "admin"
+                              ? `
+                                <span class="dash-badge-rol rol-admin">
+                                  <i class="fa-solid fa-shield-halved"></i>
+                                  ${etiquetaRol(u.rol)}
+                                </span>
+                              `
+                              : `
+                                <select
+                                  class="dash-select-rol"
+                                  data-correo="${u.correo}"
+                                  data-rol="${u.rol}"
+                                >
+
+                                  <option
+                                    value="estudiante"
+                                    ${
+                                      u.rol ===
+                                        "estudiante" ||
+                                      u.rol ===
+                                        "invitado"
+                                        ? "selected"
+                                        : ""
+                                    }
+                                  >
+                                    ${etiquetaRol("estudiante")}
+                                  </option>
+
+                                  <option
+                                    value="docente"
+                                    ${
+                                      u.rol ===
+                                        "docente"
+                                        ? "selected"
+                                        : ""
+                                    }
+                                  >
+                                    ${etiquetaRol("docente")}
+                                  </option>
+
+                                </select>
+                              `
+                          }
+                          </div>
 
                         </div>
+                      `,
+                    )
+                    .join("")}
+                `
+            }
 
-                        ${
-                          u.rol === "admin"
-                            ? `
-                              <span class="dash-badge-rol">
-                                ADMINISTRADOR
-                              </span>
-                            `
-                            : `
-                              <select
-                                class="dash-select-rol"
-                                data-correo="${u.correo}"
-                                style="
-                                  min-width:130px;
-                                "
-                              >
+          </div>
 
-                                <option
-                                  value="estudiante"
-                                  ${
-                                    u.rol ===
-                                      "estudiante" ||
-                                    u.rol ===
-                                      "invitado"
-                                      ? "selected"
-                                      : ""
-                                  }
-                                >
-                                  Estudiante
-                                </option>
+        </div>
 
-                                <option
-                                  value="docente"
-                                  ${
-                                    u.rol ===
-                                    "docente"
-                                      ? "selected"
-                                      : ""
-                                  }
-                                >
-                                  Docente
-                                </option>
+        <div class="dash-card">
 
-                              </select>
-                            `
-                        }
+          <div class="dash-card-encabezado">
+            <p class="dash-card-titulo">${t("comun.nav.clases")} (${clases.length})</p>
+            <div class="dash-card-herramientas" id="herramientasClasesAdmin"></div>
+          </div>
 
-                      </div>
-                    `,
-                  )
-                  .join("")
+          ${
+            errorClases
+              ? `
+                <p class="dash-error-panel">
+                  ${errorClases}
+                </p>
+              `
+              : ""
+          }
+
+          ${
+            clases.length === 0 &&
+            !errorClases
+              ? `
+                <p class="dash-vacio">
+                  ${t("admin.sinClasesLista")}
+                </p>
+              `
+              : ""
+          }
+
+          ${
+            clases.length > 0
+              ? `
+                <div class="dash-tabla-envoltura" id="listaClasesAdmin">
+
+                  <table class="dash-tabla">
+
+                    <thead>
+
+                      <tr>
+
+                        <th>
+                          ${t("perfil.materia")}
+                        </th>
+
+                        <th>
+                          ${t("admin.codigo")}
+                        </th>
+
+                        <th>
+                          ${t("admin.docente")}
+                        </th>
+
+                        <th class="centro">
+                          ${t("admin.colInscritos")}
+                        </th>
+
+                      </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                      ${clases
+                        .map(
+                          (clase) => `
+                            <tr data-buscar="${clase.materia} ${clase.codigo} ${clase.nombreDocente}">
+
+                              <td>
+                                ${clase.materia}
+                              </td>
+
+                              <td class="tenue">
+                                ${clase.codigo}
+                              </td>
+
+                              <td>
+                                ${clase.nombreDocente}
+                              </td>
+
+                              <td class="centro">
+                                ${clase.totalInscritos}
+                              </td>
+
+                            </tr>
+                          `,
+                        )
+                        .join("")}
+
+                    </tbody>
+
+                  </table>
+
+                </div>
+              `
+              : ""
+          }
+
+        </div>
+
+        <div class="dash-card">
+
+          <div class="dash-card-encabezado">
+            <p class="dash-card-titulo">${t("admin.inscripciones")} (${inscripciones.length})</p>
+            <div class="dash-card-herramientas" id="herramientasInscripciones"></div>
+          </div>
+
+          ${
+            errorInscripciones
+              ? `
+                <p class="dash-error-panel">
+                  ${errorInscripciones}
+                </p>
+              `
+              : ""
+          }
+
+          ${
+            inscripciones.length === 0 &&
+            !errorInscripciones
+              ? `
+                <p class="dash-vacio">
+                  ${t("admin.sinInscripciones")}
+                </p>
+              `
+              : ""
+          }
+
+          ${
+            inscripciones.length > 0
+              ? `
+                <div class="dash-tabla-envoltura" id="listaInscripcionesAdmin">
+
+                  <table class="dash-tabla">
+
+                    <thead>
+
+                      <tr>
+
+                        <th>
+                          ${t("admin.estudiante")}
+                        </th>
+
+                        <th>
+                          ${t("perfil.materia")}
+                        </th>
+
+                        <th>
+                          ${t("admin.codigo")}
+                        </th>
+
+                        <th>
+                          ${t("admin.fecha")}
+                        </th>
+
+                      </tr>
+
+                    </thead>
+
+                    <tbody>
+
+                      ${inscripciones
+                        .map(
+                          (inscripcion) => `
+                            <tr data-buscar="${inscripcion.nombreEstudiante} ${inscripcion.materia} ${inscripcion.codigo}">
+
+                              <td>
+                                ${inscripcion.nombreEstudiante}
+                              </td>
+
+                              <td>
+                                ${inscripcion.materia}
+                              </td>
+
+                              <td class="tenue">
+                                ${inscripcion.codigo}
+                              </td>
+
+                              <td class="tenue">
+                                ${inscripcion.fecha}
+                              </td>
+
+                            </tr>
+                          `,
+                        )
+                        .join("")}
+
+                    </tbody>
+
+                  </table>
+
+                </div>
+              `
+              : ""
           }
 
         </div>
 
       </div>
 
-      <div
-        style="
-          background:rgba(255,255,255,0.04);
-          border-radius:12px;
-          padding:20px 24px;
-          margin-bottom:24px;
-        "
-      >
-
-        <p class="dash-seccion-titulo">
-          Todas las clases (${clases.length})
-        </p>
-
-        ${
-          errorClases
-            ? `
-              <p
-                style="
-                  color:#ff6b6b;
-                  font-size:13px;
-                "
-              >
-                ${errorClases}
-              </p>
-            `
-            : ""
-        }
-
-        ${
-          clases.length === 0 &&
-          !errorClases
-            ? `
-              <p class="dash-sin-clases">
-                No hay clases creadas todavía.
-              </p>
-            `
-            : ""
-        }
-
-        ${
-          clases.length > 0
-            ? `
-              <div
-                style="
-                  overflow-x:auto;
-                "
-              >
-
-                <table
-                  style="
-                    width:100%;
-                    border-collapse:collapse;
-                  "
-                >
-
-                  <thead>
-
-                    <tr>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Materia
-                      </th>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Código
-                      </th>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Docente
-                      </th>
-
-                      <th
-                        style="
-                          text-align:center;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Inscritos
-                      </th>
-
-                    </tr>
-
-                  </thead>
-
-                  <tbody>
-
-                    ${clases
-                      .map(
-                        (clase) => `
-                          <tr>
-
-                            <td
-                              style="
-                                color:white;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${clase.materia}
-                            </td>
-
-                            <td
-                              style="
-                                color:#9aa8c7;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${clase.codigo}
-                            </td>
-
-                            <td
-                              style="
-                                color:#b8c4dd;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${clase.nombreDocente}
-                            </td>
-
-                            <td
-                              style="
-                                color:white;
-                                text-align:center;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${clase.totalInscritos}
-                            </td>
-
-                          </tr>
-                        `,
-                      )
-                      .join("")}
-
-                  </tbody>
-
-                </table>
-
-              </div>
-            `
-            : ""
-        }
-
-      </div>
-
-      <div
-        style="
-          background:rgba(255,255,255,0.04);
-          border-radius:12px;
-          padding:20px 24px;
-        "
-      >
-
-        <p class="dash-seccion-titulo">
-          Todas las inscripciones (${inscripciones.length})
-        </p>
-
-        ${
-          errorInscripciones
-            ? `
-              <p
-                style="
-                  color:#ff6b6b;
-                  font-size:13px;
-                "
-              >
-                ${errorInscripciones}
-              </p>
-            `
-            : ""
-        }
-
-        ${
-          inscripciones.length === 0 &&
-          !errorInscripciones
-            ? `
-              <p class="dash-sin-clases">
-                Todavía no hay inscripciones.
-              </p>
-            `
-            : ""
-        }
-
-        ${
-          inscripciones.length > 0
-            ? `
-              <div
-                style="
-                  overflow-x:auto;
-                "
-              >
-
-                <table
-                  style="
-                    width:100%;
-                    border-collapse:collapse;
-                  "
-                >
-
-                  <thead>
-
-                    <tr>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Estudiante
-                      </th>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Materia
-                      </th>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Código
-                      </th>
-
-                      <th
-                        style="
-                          text-align:left;
-                          color:#9aa8c7;
-                          font-size:12px;
-                          padding:12px 8px;
-                        "
-                      >
-                        Fecha
-                      </th>
-
-                    </tr>
-
-                  </thead>
-
-                  <tbody>
-
-                    ${inscripciones
-                      .map(
-                        (inscripcion) => `
-                          <tr>
-
-                            <td
-                              style="
-                                color:white;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${inscripcion.nombreEstudiante}
-                            </td>
-
-                            <td
-                              style="
-                                color:#b8c4dd;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${inscripcion.materia}
-                            </td>
-
-                            <td
-                              style="
-                                color:#9aa8c7;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${inscripcion.codigo}
-                            </td>
-
-                            <td
-                              style="
-                                color:#9aa8c7;
-                                padding:12px 8px;
-                                border-top:1px solid rgba(255,255,255,0.06);
-                              "
-                            >
-                              ${inscripcion.fecha}
-                            </td>
-
-                          </tr>
-                        `,
-                      )
-                      .join("")}
-
-                  </tbody>
-
-                </table>
-
-              </div>
-            `
-            : ""
-        }
-
-      </div>
-
-    </div>
   `;
+
+  // ==========================================================
+  // BUSCADOR Y FILTROS
+  // ==========================================================
+
+  const FILTROS_ROL = [
+    { valor: "todos", etiqueta: t("admin.filtroTodos") },
+    { valor: "admin", etiqueta: t("admin.filtroAdmins") },
+    { valor: "docente", etiqueta: t("admin.filtroDocentes") },
+    { valor: "estudiante", etiqueta: t("admin.filtroEstudiantes") },
+  ];
+
+  const listaUsuarios =
+    contenido.querySelector<HTMLElement>("#listaUsuarios");
+
+  const herramientasUsuarios =
+    contenido.querySelector<HTMLElement>("#herramientasUsuarios");
+
+  if (listaUsuarios && herramientasUsuarios) {
+    montarFiltros({
+      destino: herramientasUsuarios,
+      ubicacionVacio: listaUsuarios,
+      items: Array.from(
+        listaUsuarios.querySelectorAll<HTMLElement>(".dash-fila-usuario"),
+      ),
+      placeholder: t("admin.buscarUsuario"),
+      filtros: FILTROS_ROL,
+      etiquetaConteo: t("admin.conteoUsuarios"),
+    });
+  }
+
+  montarTabla(contenido, {
+    destino: "#herramientasClasesAdmin",
+    tabla: "#listaClasesAdmin",
+    placeholder: t("admin.buscarMateria"),
+    etiquetaConteo: t("admin.conteoClases"),
+  });
+
+  montarTabla(contenido, {
+    destino: "#herramientasInscripciones",
+    tabla: "#listaInscripcionesAdmin",
+    placeholder: t("admin.buscarInscripcion"),
+    etiquetaConteo: t("admin.conteoInscripciones"),
+  });
 
   contenido
     .querySelectorAll<HTMLSelectElement>(
@@ -1007,7 +994,7 @@ export async function mostrarUsuariosAdmin(
 
             if (!res.ok) {
               let mensaje =
-                "No se pudo actualizar el rol.";
+                t("admin.errorRol");
 
               try {
                 const data =
@@ -1029,7 +1016,7 @@ export async function mostrarUsuariosAdmin(
             );
 
             alert(
-              "No se pudo conectar con el servidor.",
+              t("perfil.msg.sinServidor"),
             );
           } finally {
             select.disabled = false;

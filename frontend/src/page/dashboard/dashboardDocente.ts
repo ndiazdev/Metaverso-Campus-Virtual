@@ -4,6 +4,9 @@
 // ============================================================
 
 import type { Cuenta, Clase } from "../../state/estado";
+import { etiquetaRol, fechaCorta } from "./dashboardComun";
+import { montarFiltrosClases } from "./dashboardFiltros";
+import { t } from "../../state/idioma";
 
 // ============================================================
 // CONFIGURACIÓN API
@@ -57,7 +60,7 @@ export async function mostrarDashboardDocente(
 
   contenido.innerHTML = `
     <div class="dash-cargando">
-      Cargando clases desde la base de datos...
+      ${t("docente.cargando")}
     </div>
   `;
 
@@ -65,7 +68,7 @@ export async function mostrarDashboardDocente(
   // CONSULTAR CLASES DEL DOCENTE
   // ==========================================================
 
-  let misClases: Clase[] = [];
+  let misClases: Array<Clase & { totalInscritos?: number }> = [];
 
   try {
     const endpoint = `${API_URL}/clases/docente/${encodeURIComponent(
@@ -85,105 +88,155 @@ export async function mostrarDashboardDocente(
   // MOSTRAR CONTENIDO
   // ==========================================================
 
+  const totalInscritos = misClases.reduce(
+    (suma, clase) => suma + (clase.totalInscritos || 0),
+    0,
+  );
+
+  const hayInscritos = misClases.some(
+    (clase) => typeof clase.totalInscritos === "number",
+  );
+
   contenido.innerHTML = `
 
-    <div class="dash-cuerpo">
+    <div class="dash-cabecera">
 
-      <!-- ==================================================
-           COLUMNA IZQUIERDA
-           ================================================== -->
-
-      <div class="dash-columna-izq">
-
-        <!-- Rol -->
-
-        <div class="dash-etiqueta-rol">
-          DOCENTE
-        </div>
-
-
-        <!-- Nombre -->
-
-        <p class="dash-nombre-usuario">
+      <div>
+        <p class="dash-cabecera-etiqueta">${etiquetaRol(cuenta.rol)}</p>
+        <h1 class="dash-cabecera-titulo">
           ${cuenta.nombreCompleto.split(" ")[0]}
+        </h1>
+        <p class="dash-cabecera-subtitulo">
+          ${misClases.length}
+          ${misClases.length === 1 ? t("docente.claseCreada") : t("docente.clasesCreadas")}
         </p>
+      </div>
 
-
-        <!-- Avatar -->
-
-        <img
-          class="dash-avatar-img"
-          src="https://d2yoo3qu6vrk5d.cloudfront.net/pulzo-lite/images-resized/PP3946599-h-o.webp"
-          alt="Avatar del docente"
-        />
-
-
-        <!-- Botón crear clase -->
-
+      <div class="dash-cabecera-acciones">
         <button
           class="dash-boton-principal"
           id="botonAccionPrincipal"
         >
-          Crear Clase
+          <i class="fa-solid fa-plus"></i>
+          ${t("docente.nuevaClase")}
         </button>
 
-
-        <!-- Usuarios conectados -->
-
-        <p class="dash-contador">
-          ● 47 usuarios conectados
-        </p>
-
+        <img
+          class="dash-avatar-mini"
+          src="https://d2yoo3qu6vrk5d.cloudfront.net/pulzo-lite/images-resized/PP3946599-h-o.webp"
+          alt="${t("docente.altAvatar")}"
+        />
       </div>
 
+    </div>
 
-      <!-- ==================================================
-           COLUMNA DERECHA
-           ================================================== -->
+    <div class="dash-grid dash-grid-stats">
 
-      <div class="dash-columna-der">
+      <div class="dash-stat">
+        <div class="dash-stat-cabecera">
+          <span class="dash-stat-icono">
+            <i class="fa-solid fa-graduation-cap"></i>
+          </span>
+          <span class="dash-stat-numero">${misClases.length}</span>
+        </div>
+        <div class="dash-stat-etiqueta">${t("docente.statClases")}</div>
+      </div>
 
-        <!-- Título -->
+      ${
+        hayInscritos
+          ? `
+            <div class="dash-stat">
+              <div class="dash-stat-cabecera">
+                <span class="dash-stat-icono">
+                  <i class="fa-solid fa-user-group"></i>
+                </span>
+                <span class="dash-stat-numero">${totalInscritos}</span>
+              </div>
+              <div class="dash-stat-etiqueta">${t("docente.statInscritos")}</div>
+            </div>
+          `
+          : ""
+      }
 
-        <p class="dash-seccion-titulo">
-          Mis clases creadas
-        </p>
+    </div>
 
+    <div class="dash-card">
 
-        <!-- Lista -->
+      <div class="dash-card-encabezado">
+        <p class="dash-card-titulo">${t("docente.misClases")}</p>
+        <div class="dash-card-herramientas" id="herramientasClases"></div>
+      </div>
 
-        <div id="listaClases">
+      <div class="dash-lista" id="listaClases">
 
           ${
             misClases.length === 0
               ? `
-                <p class="dash-sin-clases">
-                  Todavía no tienes clases creadas.
+                <p class="dash-vacio">
+                  ${t("docente.sinClases")}
                 </p>
               `
               : misClases
                   .map(
                     (clase) => `
-                      <div class="dash-tarjeta-clase">
+                      <div
+                        class="dash-tarjeta-clase"
+                        data-buscar="${clase.materia} ${clase.codigo}"
+                      >
 
-                        <div>
+                        <div class="dash-clase-datos">
 
-                          <p class="dash-clase-nombre">
-                            ${clase.materia}
-                          </p>
+                          <span class="dash-clase-icono">
+                            <i class="fa-solid fa-graduation-cap"></i>
+                          </span>
 
-                          <p class="dash-clase-meta">
-                            ${clase.codigo}
-                          </p>
+                          <div class="dash-clase-texto">
+
+                            <p class="dash-clase-nombre">
+                              ${clase.materia}
+                            </p>
+
+                            <p class="dash-clase-meta">
+
+                              <span class="dash-dato">
+                                <i class="fa-solid fa-hashtag"></i>
+                                <span class="dash-codigo">${clase.codigo}</span>
+                              </span>
+
+                              ${
+                                typeof clase.totalInscritos === "number"
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-user-group"></i>
+                                      ${clase.totalInscritos} ${t("docente.inscritos")}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                              ${
+                                fechaCorta(clase.fechaCreacion)
+                                  ? `
+                                    <span class="dash-dato">
+                                      <i class="fa-solid fa-calendar"></i>
+                                      ${fechaCorta(clase.fechaCreacion)}
+                                    </span>
+                                  `
+                                  : ""
+                              }
+
+                            </p>
+
+                          </div>
 
                         </div>
-
 
                         <button
                           class="dash-boton-entrar"
                           data-codigo="${clase.codigo}"
                         >
-                          Abrir
+                          ${t("docente.abrir")}
+                          <i class="fa-solid fa-arrow-right"></i>
                         </button>
 
                       </div>
@@ -194,45 +247,15 @@ export async function mostrarDashboardDocente(
 
         </div>
 
-
-        <!-- ==================================================
-             ESTADÍSTICAS
-             ================================================== -->
-
-        <div class="dash-stats">
-
-          <div class="dash-stat">
-
-            <div class="dash-stat-numero">
-              ${misClases.length}
-            </div>
-
-            <div class="dash-stat-etiqueta">
-              Clases creadas
-            </div>
-
-          </div>
-
-
-          <div class="dash-stat">
-
-            <div class="dash-stat-numero">
-              47
-            </div>
-
-            <div class="dash-stat-etiqueta">
-              Usuarios conectados
-            </div>
-
-          </div>
-
-        </div>
-
-      </div>
-
     </div>
 
   `;
+
+  // ==========================================================
+  // BUSCADOR DE CLASES
+  // ==========================================================
+
+  montarFiltrosClases(contenido, t("docente.buscar"));
 
   // ==========================================================
   // BOTONES "ABRIR"
@@ -294,23 +317,19 @@ export async function mostrarDashboardDocente(
       <div class="dash-modal">
 
         <h3>
-          Crear nueva clase
+          ${t("docente.crearTitulo")}
         </h3>
 
 
         <p>
-          Escribe la materia que vas a dictar
+          ${t("docente.crearTexto")}
         </p>
 
 
         <input
-          class="dash-input-codigo"
+          class="dash-input-codigo dash-input-texto"
           id="campoMateriaNueva"
-          placeholder="Ej: Cálculo II"
-          style="
-            text-transform:none;
-            letter-spacing:normal;
-          "
+          placeholder="${t("docente.placeholderMateria")}"
         />
 
 
@@ -324,7 +343,7 @@ export async function mostrarDashboardDocente(
           class="dash-boton-principal"
           id="botonConfirmarClase"
         >
-          Generar clase
+          ${t("docente.generarClase")}
         </button>
 
       </div>
@@ -363,7 +382,7 @@ export async function mostrarDashboardDocente(
       // ----------------------------------------------------
 
       if (materia.length === 0) {
-        errorModal.textContent = "Escribe el nombre de la materia.";
+        errorModal.textContent = t("docente.errorMateria");
 
         return;
       }
@@ -384,7 +403,7 @@ export async function mostrarDashboardDocente(
 
       botonConfirmar.disabled = true;
 
-      botonConfirmar.textContent = "Guardando...";
+      botonConfirmar.textContent = t("docente.guardando");
 
       try {
         // ==================================================
@@ -414,11 +433,11 @@ export async function mostrarDashboardDocente(
         // ==================================================
 
         if (!res.ok) {
-          errorModal.textContent = "Error al guardar en MySQL.";
+          errorModal.textContent = t("docente.errorGuardar");
 
           botonConfirmar.disabled = false;
 
-          botonConfirmar.textContent = "Generar clase";
+          botonConfirmar.textContent = t("docente.generarClase");
 
           return;
         }
@@ -432,12 +451,12 @@ export async function mostrarDashboardDocente(
             <div class="dash-modal">
 
               <h3>
-                ¡Clase creada!
+                ${t("docente.exitoTitulo")}
               </h3>
 
 
               <p>
-                Comparte este código con tus estudiantes
+                ${t("docente.exitoTexto")}
               </p>
 
 
@@ -452,7 +471,7 @@ export async function mostrarDashboardDocente(
                 class="dash-boton-principal"
                 id="botonEntrarAhora"
               >
-                Entrar a la clase
+                ${t("docente.entrarClase")}
               </button>
 
             </div>
@@ -492,11 +511,11 @@ export async function mostrarDashboardDocente(
       } catch (error) {
         console.error("Error al crear clase:", error);
 
-        errorModal.textContent = "No se pudo conectar con el servidor.";
+        errorModal.textContent = t("perfil.msg.sinServidor");
 
         botonConfirmar.disabled = false;
 
-        botonConfirmar.textContent = "Generar clase";
+        botonConfirmar.textContent = t("docente.generarClase");
       }
     });
   }

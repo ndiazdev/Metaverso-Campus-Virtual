@@ -24,6 +24,7 @@ export interface Cuenta {
   rol: Rol;
   carrera?: string; // solo estudiante
   materia?: string; // solo docente
+  foto?: string; // dataURL de la foto propia (opcional)
 }
 
 export interface Clase {
