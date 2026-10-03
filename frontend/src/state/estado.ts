@@ -59,6 +59,30 @@ export function guardarGeneroAvatar(genero: GeneroAvatar): void {
   localStorage.setItem(CLAVE_AVATAR, genero);
 }
 
+// Ventana de skin abierta (elegirSkin.ts la marca al abrirse y se resuelve
+// al cerrarse). Mientras exista, cargarPersonaje ESPERA antes de leer el
+// género: así el salón se carga y se ve DETRÁS de la ventana (en vez de la
+// pantalla en blanco de antes) y el modelo que entra es el que eligió el
+// usuario en esa misma sesión.
+let skinPendiente: Promise<unknown> | null = null;
+
+export function marcarSkinPendiente(promesa: Promise<unknown>): void {
+  skinPendiente = promesa;
+  promesa.then(
+    () => {
+      if (skinPendiente === promesa) skinPendiente = null;
+    },
+    () => {
+      if (skinPendiente === promesa) skinPendiente = null;
+    },
+  );
+}
+
+/** Resuelve al cerrarse la ventana de skin, o ya mismo si no hay ninguna. */
+export function esperarSkinPendiente(): Promise<void> {
+  return skinPendiente ? skinPendiente.then(() => undefined) : Promise.resolve();
+}
+
 // ---------- Cuentas ----------
 export function obtenerCuentas(): Cuenta[] {
   const datos = localStorage.getItem(CLAVE_CUENTAS);

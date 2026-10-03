@@ -261,15 +261,34 @@ export async function mostrarDashboardAdmin(
     modal.className = "dash-modal-fondo";
 
     modal.innerHTML = `
-      <div class="dash-modal">
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalClase"
+      >
 
-        <h3>
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalClase">
           ${t("admin.crearTitulo")}
         </h3>
 
         <p>
           ${t("admin.crearTexto")}
         </p>
+
+        <label class="dash-modal-etiqueta" for="campoMateriaNueva">
+          ${t("perfil.materia")}
+        </label>
 
         <input
           class="dash-input-codigo dash-input-texto"
@@ -289,10 +308,49 @@ export async function mostrarDashboardAdmin(
           ${t("admin.generarClase")}
         </button>
 
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("comun.cancelar")}
+        </button>
+
       </div>
     `;
 
     document.body.appendChild(modal);
+
+    // --------------------------------------------------------
+    // SALIDAS DEL MODAL: X, Cancelar, clic fuera y ESC.
+    // `conectarCierre` se repite después del éxito porque ahí se
+    // reescribe todo el HTML y los botones viejos quedan sin clic.
+    // --------------------------------------------------------
+
+    function cerrar(): void {
+      window.removeEventListener("keydown", alTecla, true);
+      modal.remove();
+    }
+
+    function alTecla(evento: KeyboardEvent): void {
+      if (evento.key === "Escape") {
+        evento.stopPropagation();
+        cerrar();
+      }
+    }
+
+    function conectarCierre(): void {
+      modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+        boton.addEventListener("click", cerrar);
+      });
+    }
+
+    conectarCierre();
+    window.addEventListener("keydown", alTecla, true);
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
 
     const campoMateria =
       modal.querySelector<HTMLInputElement>(
@@ -377,9 +435,24 @@ export async function mostrarDashboardAdmin(
           }
 
           modal.innerHTML = `
-            <div class="dash-modal">
+            <div
+              class="dash-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="tituloModalClase"
+            >
 
-              <h3>
+              <button
+                type="button"
+                class="dash-modal-cerrar"
+                data-cerrar
+                aria-label="${t("comun.cerrar")}"
+                title="${t("comun.cerrar")}"
+              >
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+
+              <h3 id="tituloModalClase">
                 ${t("admin.exitoTitulo")}
               </h3>
 
@@ -398,8 +471,18 @@ export async function mostrarDashboardAdmin(
                 ${t("admin.entrarClase")}
               </button>
 
+              <button
+                type="button"
+                class="dash-boton-secundario"
+                data-cerrar
+              >
+                ${t("comun.cerrar")}
+              </button>
+
             </div>
           `;
+
+          conectarCierre();
 
           const botonEntrarAhora =
             modal.querySelector<HTMLButtonElement>(
@@ -410,7 +493,9 @@ export async function mostrarDashboardAdmin(
             botonEntrarAhora.addEventListener(
               "click",
               () => {
-                modal.remove();
+                // `cerrar` suelta también el listener de ESC: si no,
+                // seguiría capturando la tecla dentro de la clase.
+                cerrar();
                 overlay.remove();
 
                 const nuevaClase: Clase = {
@@ -549,48 +634,70 @@ export async function mostrarUsuariosAdmin(
 
     </div>
 
-    <div class="dash-grid dash-grid-stats">
-
-      <div class="dash-stat">
-        <div class="dash-stat-cabecera">
-          <span class="dash-stat-icono">
-            <i class="fa-solid fa-users"></i>
-          </span>
-          <span class="dash-stat-numero">${usuarios.length}</span>
-        </div>
-        <div class="dash-stat-etiqueta">${t("comun.nav.usuarios")}</div>
-      </div>
-
-      <div class="dash-stat">
-        <div class="dash-stat-cabecera">
-          <span class="dash-stat-icono">
-            <i class="fa-solid fa-graduation-cap"></i>
-          </span>
-          <span class="dash-stat-numero">${clases.length}</span>
-        </div>
-        <div class="dash-stat-etiqueta">${t("comun.nav.clases")}</div>
-      </div>
-
-      <div class="dash-stat">
-        <div class="dash-stat-cabecera">
-          <span class="dash-stat-icono">
-            <i class="fa-solid fa-clipboard-check"></i>
-          </span>
-          <span class="dash-stat-numero">${inscripciones.length}</span>
-        </div>
-        <div class="dash-stat-etiqueta">${t("admin.inscripciones")}</div>
-      </div>
-
-    </div>
-
-      <div class="dash-grid dash-grid-tarjetas">
-
-      <div class="dash-card">
+    <div class="dash-card">
 
         <div class="dash-card-encabezado">
-          <p class="dash-card-titulo">${t("comun.nav.usuarios")} (${usuarios.length})</p>
-          <div class="dash-card-herramientas" id="herramientasUsuarios"></div>
+
+          <div class="dash-pestanas">
+            <button
+              type="button"
+              class="dash-pestana activo"
+              data-vista="usuarios"
+              aria-pressed="true"
+            >
+              <i class="fa-solid fa-users"></i>
+              ${t("comun.nav.usuarios")}
+              <span class="dash-pestana-conteo">${usuarios.length}</span>
+            </button>
+
+            <button
+              type="button"
+              class="dash-pestana"
+              data-vista="clases"
+              aria-pressed="false"
+            >
+              <i class="fa-solid fa-graduation-cap"></i>
+              ${t("comun.nav.clases")}
+              <span class="dash-pestana-conteo">${clases.length}</span>
+            </button>
+
+            <button
+              type="button"
+              class="dash-pestana"
+              data-vista="inscripciones"
+              aria-pressed="false"
+            >
+              <i class="fa-solid fa-clipboard-check"></i>
+              ${t("admin.inscripciones")}
+              <span class="dash-pestana-conteo">${inscripciones.length}</span>
+            </button>
+          </div>
+
+          <div class="dash-card-herramientas">
+            <div
+              class="dash-herramienta"
+              id="herramientasUsuarios"
+              data-zona="usuarios"
+            ></div>
+
+            <div
+              class="dash-herramienta"
+              id="herramientasClasesAdmin"
+              data-zona="clases"
+              hidden
+            ></div>
+
+            <div
+              class="dash-herramienta"
+              id="herramientasInscripciones"
+              data-zona="inscripciones"
+              hidden
+            ></div>
+          </div>
+
         </div>
+
+      <section data-zona="usuarios">
 
           ${
             errorUsuarios
@@ -713,14 +820,9 @@ export async function mostrarUsuariosAdmin(
 
           </div>
 
-        </div>
+      </section>
 
-        <div class="dash-card">
-
-          <div class="dash-card-encabezado">
-            <p class="dash-card-titulo">${t("comun.nav.clases")} (${clases.length})</p>
-            <div class="dash-card-herramientas" id="herramientasClasesAdmin"></div>
-          </div>
+      <section data-zona="clases" hidden>
 
           ${
             errorClases
@@ -811,14 +913,9 @@ export async function mostrarUsuariosAdmin(
               : ""
           }
 
-        </div>
+      </section>
 
-        <div class="dash-card">
-
-          <div class="dash-card-encabezado">
-            <p class="dash-card-titulo">${t("admin.inscripciones")} (${inscripciones.length})</p>
-            <div class="dash-card-herramientas" id="herramientasInscripciones"></div>
-          </div>
+      <section data-zona="inscripciones" hidden>
 
           ${
             errorInscripciones
@@ -909,9 +1006,9 @@ export async function mostrarUsuariosAdmin(
               : ""
           }
 
-        </div>
+      </section>
 
-      </div>
+    </div>
 
   `;
 
@@ -957,6 +1054,35 @@ export async function mostrarUsuariosAdmin(
     tabla: "#listaInscripcionesAdmin",
     placeholder: t("admin.buscarInscripcion"),
     etiquetaConteo: t("admin.conteoInscripciones"),
+  });
+
+  // ==========================================================
+  // PESTAÑAS: UNA SOLA CAJA conmuta entre usuarios / clases /
+  // inscripciones. Los chips de rol (Todos/Admins/…) pertenecen
+  // solo a la barra de usuarios, así que al cambiar de pestaña
+  // desaparecen junto con ella.
+  // ==========================================================
+
+  const pestanas = Array.from(
+    contenido.querySelectorAll<HTMLButtonElement>(".dash-pestana"),
+  );
+
+  pestanas.forEach((pestana) => {
+    pestana.addEventListener("click", () => {
+      const vista = pestana.dataset.vista ?? "";
+
+      pestanas.forEach((otra) => {
+        const activa = otra === pestana;
+        otra.classList.toggle("activo", activa);
+        otra.setAttribute("aria-pressed", String(activa));
+      });
+
+      contenido
+        .querySelectorAll<HTMLElement>("[data-zona]")
+        .forEach((zona) => {
+          zona.hidden = zona.dataset.zona !== vista;
+        });
+    });
   });
 
   contenido

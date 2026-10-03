@@ -303,9 +303,24 @@ export async function mostrarDashboardInvitado(
 
     modal.innerHTML = `
 
-      <div class="dash-modal">
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalClase"
+      >
 
-        <h3>
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalClase">
           ${t("estudiante.modalTitulo")}
         </h3>
 
@@ -340,6 +355,29 @@ export async function mostrarDashboardInvitado(
     `;
 
     document.body.appendChild(modal);
+
+    // Salidas: X, clic fuera y ESC (no hay nada que confirmar al salir).
+    function cerrar(): void {
+      window.removeEventListener("keydown", alTecla, true);
+      modal.remove();
+    }
+
+    function alTecla(evento: KeyboardEvent): void {
+      if (evento.key === "Escape") {
+        evento.stopPropagation();
+        cerrar();
+      }
+    }
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    window.addEventListener("keydown", alTecla, true);
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
 
     // ========================================================
     // ELEMENTOS DEL MODAL
@@ -420,7 +458,8 @@ export async function mostrarDashboardInvitado(
         // INSCRIPCIÓN EXITOSA
         // ==================================================
 
-        modal.remove();
+        // `cerrar` suelta también el listener de ESC.
+        cerrar();
 
         // Recargar las clases del invitado
 

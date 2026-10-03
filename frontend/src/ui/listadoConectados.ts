@@ -49,7 +49,7 @@ const ETIQUETA_ROL: Record<Rol, string> = {
 };
 
 const ESTILO = `
-.cv-presencia{position:fixed;top:16px;left:16px;z-index:1400;font-family:sans-serif;display:flex;flex-direction:column;align-items:flex-start;gap:6px;user-select:none}
+.cv-presencia{position:fixed;top:16px;left:76px;z-index:1400;font-family:sans-serif;display:flex;flex-direction:column;align-items:flex-start;gap:6px;user-select:none}/* left 76 = engranaje (16 + 44 + 16): la píldora y el engranaje, lado a lado */
 .cv-presencia-caja{background:rgba(15,23,42,0.9);border:1px solid rgba(255,255,255,0.15);border-radius:12px;box-shadow:0 6px 18px rgba(0,0,0,0.35);overflow:hidden;min-width:210px}
 .cv-presencia-cabecera{display:flex;align-items:center;gap:8px;width:100%;padding:9px 12px;border:none;background:transparent;color:#E2E8F0;font-size:14px;cursor:pointer;text-align:left}
 .cv-presencia-cabecera:hover{background:rgba(255,255,255,0.06)}

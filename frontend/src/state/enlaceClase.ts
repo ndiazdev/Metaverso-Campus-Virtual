@@ -63,3 +63,25 @@ export function escribirClaseEnLaUrl(codigo: string | null): void {
     // identificador en la barra de direcciones.
   }
 }
+
+/**
+ * Escribe la pantalla que se está viendo (/login o /dashboard) en la
+ * dirección, SIN recargar: así abrir `localhost:5173` acaba en
+ * `localhost:5173/login` y el panel queda en `/dashboard`, y la barra
+ * de direcciones siempre dice dónde se está parado.
+ *
+ * Conserva los parámetros (p. ej. `?clase=FIS-101`) y, como aquí,
+ * usa replaceState: cambiar de pantalla no llena el historial.
+ */
+export function escribirPantallaEnLaUrl(ruta: string): void {
+  try {
+    const url = new URL(window.location.href);
+    if (url.pathname !== ruta) {
+      url.pathname = ruta;
+      window.history.replaceState(null, "", url);
+    }
+  } catch {
+    // Sin API de historial la app sigue funcionando: solo no se
+    // actualiza la barra de direcciones.
+  }
+}

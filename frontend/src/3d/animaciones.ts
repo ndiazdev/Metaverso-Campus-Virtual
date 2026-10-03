@@ -10,7 +10,7 @@
 //      caderas, manos y pies a lo largo del clip decide si es sentarse,
 //      caminar, saludar, parado o una pose T que se descarta.
 //   3. Rellena los slots que falten con clips externos de /models/animacion/
-//      (caminar.glb, sentarse.glb, saludar.glb) si existen: el nombre del
+//      (caminar.glb, sentado.glb, saludar.glb) si existen: el nombre del
 //      archivo manda para esos (si no, un clip estático de sentarse se
 //      confundiría con "parado").
 //   4. Enlaza cada clip al esqueleto del personaje elegido:
@@ -35,7 +35,13 @@
 import * as BABYLON from "babylonjs";
 
 /** Acción que puede pedir el juego. */
-export type SlotAnimacion = "parado" | "caminar" | "sentarse" | "saludar";
+export type SlotAnimacion =
+  | "parado"
+  | "caminar"
+  | "sentarse"
+  | "saludar"
+  | "manoParado"
+  | "manoSentado";
 
 /** El juego solo ve esto: un grupo por acción (null = no hay clip para esa acción). */
 export interface AnimacionesPersonaje {
@@ -43,13 +49,19 @@ export interface AnimacionesPersonaje {
   caminar: BABYLON.AnimationGroup | null;
   sentarse: BABYLON.AnimationGroup | null;
   saludar: BABYLON.AnimationGroup | null;
+  /** Mano levantada de pie (alzarmanoparado.glb). */
+  manoParado: BABYLON.AnimationGroup | null;
+  /** Mano levantada sentado (alzarmanosentado.glb). */
+  manoSentado: BABYLON.AnimationGroup | null;
 }
 
 /** Clips externos que cubren slots vacíos: [slot, archivo]. */
 const EXTERNAS: ReadonlyArray<readonly [SlotAnimacion, string]> = [
   ["caminar", "caminar.glb"],
-  ["sentarse", "sentarse.glb"],
+  ["sentarse", "sentado.glb"],
   ["saludar", "saludar.glb"],
+  ["manoParado", "alzarmanoparado.glb"],
+  ["manoSentado", "alzarmanosentado.glb"],
 ];
 const CARPETA_ANIMACIONES = "/models/animacion/";
 
@@ -272,6 +284,40 @@ function congelarViaje(
   }
 }
 
+/**
+ * Reproduce un clip de mano sentado EXACTAMENTE en el puesto: sustituye sus
+ * canales de posición por los del clip de sentarse (clonados) y quita los que
+ * sentarse no tenga. El archivo alzarmanosentado.glb salió de otra sesión de
+ * Blender con el origen del brazo desplazado: sus propias posiciones dejaban
+ * la cadera ~0.77 m fuera del asiento al pulsar H (teletransporte). El gesto
+ * viaja en las rotaciones, que no se tocan, y la postura queda sobre las
+ * mismas posiciones con las que se midió offsetCaderaSentado.
+ */
+function fijarPosicionesA(destino: BABYLON.AnimationGroup, base: BABYLON.AnimationGroup): void {
+  const deBase = new Map<unknown, BABYLON.Animation>();
+  for (const ta of base.targetedAnimations) {
+    if (ta.animation.targetProperty === "position") deBase.set(ta.target, ta.animation);
+  }
+  let cambiados = 0;
+  let quitados = 0;
+  for (const ta of [...destino.targetedAnimations]) {
+    if (ta.animation.targetProperty !== "position") continue;
+    const animBase = deBase.get(ta.target);
+    destino.removeTargetedAnimation(ta.animation);
+    if (animBase) {
+      destino.addTargetedAnimation(clonarAnimacion(animBase), ta.target);
+      cambiados++;
+    } else {
+      quitados++;
+    }
+  }
+  console.log(
+    `[anim] "${destino.name}": posiciones tomadas de "${base.name}" (${cambiados} canales` +
+      (quitados ? `, ${quitados} sin par en sentarse y quitados` : "") +
+      ").",
+  );
+}
+
 // ---------------------------------------------------------------
 // Externos
 // ---------------------------------------------------------------
@@ -290,24 +336,112 @@ async function existeArchivo(url: string): Promise<boolean> {
 // Montaje principal
 // ---------------------------------------------------------------
 
+/**
+ * Qué deja montados `montarAnimaciones`, además de los clips.
+ */
+export interface MontajeAnimaciones {
+  grupos: AnimacionesPersonaje;
+  /**
+   * Cadera (Hips) con el clip sentado aplicado, relativa a la raíz y ya en
+   * unidades del salón: es el punto físico que hay que apoyar en el asiento
+   * (empty sit_*) al sentarse. null si no hay clip de sentarse.
+   */
+  caderaSentado: BABYLON.Vector3 | null;
+  /**
+   * Empties de cámara del clip sentado (1personasentado/3personasentado),
+   * en el espacio del personaje y SIN escalar (la escala la aplica personaje.ts).
+   */
+  vaciosSentado: { primera: BABYLON.Vector3 | null; tercera: BABYLON.Vector3 | null };
+}
+
+/**
+ * Mide los empties de cámara del clip sentado y los devuelve en el ESPACIO
+ * DEL PERSONAJE (sin escalar):
+ *
+ *   relativo a la raíz del archivo externo + (armature del personaje − armature del externo)
+ *
+ * El segundo término es lo que hace que los empties sigan al cuerpo: si el
+ * archivo del clip trae el armature desplazado (sentado.glb lo lleva a −0.45
+ * en Y), al retargetear el hueso Hips queda 0.45 más arriba de donde estaba en
+ * su archivo, pero los empties cuelcan de la raíz (no del armature) y no se
+ * mueven solos: se les suma la misma diferencia.
+ *
+ * La misma convención que los empties de pie (rotación diestro→zurdo y flip
+ * del loader incluidos, porque ambos archivos pasan por el mismo loader).
+ */
+function medirVaciosSentado(
+  carga: BABYLON.ISceneLoaderAsyncResult,
+  armPersonaje: BABYLON.TransformNode | null,
+): { primera: BABYLON.Vector3 | null; tercera: BABYLON.Vector3 | null } {
+  const nodos: BABYLON.TransformNode[] = [...carga.transformNodes, ...carga.meshes];
+  const raizExterna =
+    carga.meshes.find((m) => !m.parent) ??
+    carga.transformNodes.find((n) => !n.parent) ??
+    null;
+  const hipsExterno = nodos.find((n) => normalizarNombre(n.name) === "hips") ?? null;
+  const armExterno =
+    hipsExterno?.parent instanceof BABYLON.TransformNode ? hipsExterno.parent : null;
+
+  let delta = BABYLON.Vector3.Zero();
+  if (armPersonaje && armExterno) {
+    armPersonaje.computeWorldMatrix?.(true);
+    armExterno.computeWorldMatrix?.(true);
+    delta = armPersonaje.absolutePosition.subtract(armExterno.absolutePosition);
+  }
+
+  const relativo = (subcadena: string): BABYLON.Vector3 | null => {
+    const vacio = nodos.find((n) => n.name.toLowerCase().includes(subcadena));
+    if (!vacio || !raizExterna) return null;
+    vacio.computeWorldMatrix?.(true);
+    raizExterna.computeWorldMatrix?.(true);
+    const p = vacio.absolutePosition.subtract(raizExterna.absolutePosition).add(delta);
+    return Number.isFinite(p.y) ? p : null;
+  };
+
+  const primera = relativo("1persona");
+  const tercera = relativo("3persona");
+  console.log(
+    `[anim] empties sentado (sin escalar) → 1P ${primera?.toString() ?? "—"} · ` +
+      `3P ${tercera?.toString() ?? "—"} · Δ armature ${delta.toString()}`,
+  );
+  return { primera, tercera };
+}
+
 export async function montarAnimaciones(
   escena: BABYLON.Scene,
   esqueleto: BABYLON.Skeleton | null,
   gruposPropios: BABYLON.AnimationGroup[],
   alturaMundo: number,
-): Promise<AnimacionesPersonaje> {
-  const vacias: AnimacionesPersonaje = { parado: null, caminar: null, sentarse: null, saludar: null };
+  raiz: BABYLON.AbstractMesh | null,
+): Promise<MontajeAnimaciones> {
+  const vacias: AnimacionesPersonaje = {
+    parado: null,
+    caminar: null,
+    sentarse: null,
+    saludar: null,
+    manoParado: null,
+    manoSentado: null,
+  };
 
   // 1) Nada de autoplay: varios .glb arrancan una animación al cargar.
   for (const g of gruposPropios) g.stop();
 
   if (!esqueleto) {
     for (const g of gruposPropios) g.dispose();
-    return vacias;
+    return { grupos: vacias, caderaSentado: null, vaciosSentado: { primera: null, tercera: null } };
   }
 
   const mapa = mapaDeEnlaces(esqueleto);
   const descartes = new Set<BABYLON.AnimationGroup>();
+
+  // Armature del personaje elegido (padre de su Hips, si existe): hace falta
+  // para corregir los empties del clip sentado si el archivo externo trae el
+  // armature desplazado (ver medirVaciosSentado).
+  const hipsChar = mapa.get("hips");
+  const armPersonaje =
+    hipsChar instanceof BABYLON.TransformNode && hipsChar.parent instanceof BABYLON.TransformNode
+      ? hipsChar.parent
+      : null;
 
   // 2) Clasificar los clips propios por contenido.
   const propios = gruposPropios.map((grupo) => ({ grupo, m: metricasDe(grupo) }));
@@ -361,7 +495,18 @@ export async function montarAnimaciones(
     return nuevo;
   };
 
-  const resultado: AnimacionesPersonaje = { parado: null, caminar: null, sentarse: null, saludar: null };
+  const resultado: AnimacionesPersonaje = {
+    parado: null,
+    caminar: null,
+    sentarse: null,
+    saludar: null,
+    manoParado: null,
+    manoSentado: null,
+  };
+  let vaciosSentado: { primera: BABYLON.Vector3 | null; tercera: BABYLON.Vector3 | null } = {
+    primera: null,
+    tercera: null,
+  };
   for (const slot of ["parado", "caminar", "sentarse", "saludar"] as const) {
     const propio = elegidos.get(slot);
     if (propio) resultado[slot] = enlazar(propio);
@@ -382,7 +527,17 @@ export async function montarAnimaciones(
         const enlazado = enlazar(grupo);
         if (enlazado) {
           resultado[slot] = enlazado;
+          // La mano alzada sentado se apoya SIEMPRE en las posiciones del clip
+          // de sentarse (el puesto); las suyas vienen desplazadas de otra
+          // sesión de Blender y teletransportaban fuera de la silla.
+          if (slot === "manoSentado" && resultado.sentarse) {
+            fijarPosicionesA(enlazado, resultado.sentarse);
+          }
           console.log(`[anim] slot "${slot}" cubierto con ${archivo}`);
+          // Los empties de cámara del clip sentado se miden ANTES de tirar los
+          // nodos del archivo externo: dan la vista 1ª/3ª persona con el cuerpo
+          // sentado (si el archivo no los trae, quedan null y valen los respaldos).
+          if (slot === "sentarse") vaciosSentado = medirVaciosSentado(carga, armPersonaje);
         }
         for (const otro of carga.animationGroups) if (otro !== grupo) descartes.add(otro);
         if (!enlazado) descartes.add(grupo);
@@ -396,17 +551,35 @@ export async function montarAnimaciones(
     }
   }
 
-  // 5) Pose limpia inicial con el clip de parado (el muestreo dejó una pose al azar).
+  // 5) CADERA DEL POSE SENTADO: se aplica el clip (su frame final) y se mide
+  //    la cadera del esqueleto elegido respecto de la raíz, ya en unidades del
+  //    salón. Es el punto que al sentarse hay que apoyar sobre el asiento
+  //    (empty sit_*), en vez de clavar los pies en el suelo. Después vuelve la
+  //    pose de parado.
+  let caderaSentado: BABYLON.Vector3 | null = null;
+  if (resultado.sentarse && raiz && hipsChar instanceof BABYLON.TransformNode) {
+    aplicarGrupo(resultado.sentarse, resultado.sentarse.to);
+    forzarMundo(hipsChar);
+    const rel = hipsChar.absolutePosition.subtract(raiz.absolutePosition);
+    if (Number.isFinite(rel.y)) {
+      caderaSentado = rel;
+      console.log(`[anim] cadera sentado → ${rel.toString()} (relativa a la raíz, unidades del salón)`);
+    }
+  }
+
+  // 6) Pose limpia inicial con el clip de parado (el muestreo dejó una pose al azar).
   const parado = resultado.parado;
   if (parado) aplicarGrupo(parado, (parado.from + parado.to) / 2);
 
-  // 6) Tirar todo lo que no se usa.
+  // 7) Tirar todo lo que no se usa (los slots de mano y los clips propios
+  //    descartados cuentan como "no usado").
+  const usados = new Set(Object.values(resultado));
   for (const g of descartes) {
-    if (g !== resultado.parado && g !== resultado.caminar && g !== resultado.sentarse && g !== resultado.saludar) {
+    if (!usados.has(g)) {
       g.stop();
       g.dispose();
     }
   }
 
-  return resultado;
+  return { grupos: resultado, caderaSentado, vaciosSentado };
 }

@@ -10,6 +10,8 @@ import {
 } from "../../state/preferencias";
 import type { Idioma, Tema } from "../../state/preferencias";
 import { t } from "../../state/idioma";
+import { escribirPantallaEnLaUrl } from "../../state/enlaceClase";
+import { LOGO_URL } from "../dashboard/dashboardEstilos";
 
 // El bloque de imagen que se repite en el login y en el registro.
 // Es un CARRUSEL: cada entrada es la lista de nombres que se prueban en orden
@@ -35,10 +37,11 @@ const PANEL_IMAGEN = `
   </div>
 `;
 
-// Encabezado de marca que encabeza el formulario (título + línea de color).
+// Encabezado de marca que encabeza el formulario (logo centrado + título).
 function marcaSitio(): string {
   return `
   <div class="login-marca-sitio">
+    <img class="login-logo" src="${LOGO_URL}" alt="${t("comun.universidad")}" />
     <h1 class="login-titulo">${t("login.titulo")}</h1>
     <p class="login-kicker">${t("login.kicker")}</p>
   </div>
@@ -119,6 +122,10 @@ const ESTILOS = `
   /* padding-topAmplio: deja el hueco del selector de idioma/tema */
   .login-panel-form { flex: 1 1 auto; min-width: 0; padding: 64px 50px 44px; display: flex; flex-direction: column; justify-content: center; }
   .login-marca-sitio { margin-bottom: 30px; }
+  /* Logo del campus virtual: centrado sobre el título (misma imagen que
+     usa el dashboard). Si la URL externa falla, ocultarLogoSiFalla lo
+     oculta y no queda ningún icono roto. */
+  .login-logo { display: block; height: 64px; width: auto; max-width: 100%; margin: 0 auto 18px; object-fit: contain; }
   .login-titulo { margin: 0; font-size: 27px; line-height: 1.14; font-weight: 800; letter-spacing: 0.4px; color: var(--c-texto); text-transform: uppercase; }
   .login-kicker {
     display: flex; align-items: center; gap: 10px; margin: 14px 0 0;
@@ -299,7 +306,7 @@ function conectarSelectorLogin(
 // Si el logo institucional no carga (lo tenemos de una URL externa), se oculta
 // y la insignia se queda solo con el texto: nunca queda un icono roto.
 function ocultarLogoSiFalla(contenedor: ParentNode): void {
-  const logo = contenedor.querySelector<HTMLImageElement>(".login-marca-logo");
+  const logo = contenedor.querySelector<HTMLImageElement>(".login-logo");
   if (!logo) return;
   const fallo = () => {
     logo.style.display = "none";
@@ -423,6 +430,10 @@ function detectarMientrasSeEscribe(correo: string): Rol | null {
 }
 
 export function iniciarLogin(alIniciarSesion: (cuenta: Cuenta) => void): void {
+  // La dirección identifica la pantalla: sin cuenta se vive en /login,
+  // así que abrir localhost:5173 queda en localhost:5173/login.
+  escribirPantallaEnLaUrl("/login");
+
   inyectarTema();
   inyectarEstilos();
   mostrarFormularioLogin(alIniciarSesion);

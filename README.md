@@ -157,6 +157,25 @@ la lista de los demás.
 > pueden reproducir animaciones, así que caminan con un balanceo y las acciones se
 > leen en la etiqueta de su nombre.
 
+## 6. Modelos 3D (personajes y animaciones)
+
+Todo lo que se carga en el salón vive en `frontend/public/models/`:
+
+| carpeta | archivos | para qué |
+|---|---|---|
+| `personajes/` | `estudianteMujer/estudianteHombre`, `profeMujer/profeHombre`, `adminMujer/adminHombre` (~50–60 MB cada uno) | el cuerpo del avatar local y plantilla de los remotos; se elige por rol + género en la mini-ventana de skin |
+| `personajes/` | `hombre.glb` (respaldo final del catálogo; si no está, se salta) | último candidato de cada fila de `CATALOGO` |
+| `animacion/` | `caminar.glb`, `sentado.glb`, `alzarmanoparado.glb`, `alzarmanosentado.glb` | clips externos que cubren los slots de animación (caminar, sentarse y la mano alzada con H); `saludar.glb` es opcional: si no existe, el slot de saludar queda vacío |
+| `images/` | `adminFimg/adminMimg`, `profeFimg/profeMimg`, `estuFimg/estuMimg` | foto de las tarjetas de skin y del panel (si no cargara, se dibuja el ícono de respaldo) |
+
+El orden de candidatos de cada skin está en `CATALOGO` (`frontend/src/3d/personaje.ts`):
+si un archivo no existe o sale sin cuerpo con esqueleto, se descarta con aviso en
+consola y se sigue con el siguiente.
+
+**Enlace de los modelos (Google Drive):** `AÑADIR_AQUÍ_EL_ENLACE_A_LA_CARPETA_DEL_DRIVE`
+(pendiente: espejo de los .glb pesados por si hay que reinstalarlos sin volver a
+bajarlos del repositorio).
+
 ## Notas
 
 - **El canal es una sala por clase**: `sala:entrar`, `sala:participantes`,

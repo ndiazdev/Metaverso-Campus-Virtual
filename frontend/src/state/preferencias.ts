@@ -54,6 +54,13 @@ interface Tokens {
   "acento-tinto": string;
   "texto-boton": string;
   error: string;
+  /** Verde de acción: pestañas y estados del panel de administración. */
+  verde: string;
+  "verde-hover": string;
+  "verde-suave": string;
+  "verde-borde": string;
+  /** Color del texto sobre el verde sólido (contraste por tema). */
+  "verde-texto": string;
   "rol-docente-fondo": string;
   "rol-docente-borde": string;
   "rol-docente-texto": string;
@@ -87,6 +94,11 @@ const CLARO: Tokens = {
   "acento-tinto": "#7A5A06",
   "texto-boton": "#241b04",
   error: "#b4524f",
+  verde: "#15803D",
+  "verde-hover": "#166534",
+  "verde-suave": "#E9F6EE",
+  "verde-borde": "#BBE3CB",
+  "verde-texto": "#FFFFFF",
   "rol-docente-fondo": "#EDF1FB",
   "rol-docente-borde": "#D9E1F5",
   "rol-docente-texto": "#3E5693",
@@ -117,6 +129,11 @@ const OSCURO: Tokens = {
   "acento-tinto": "#f2c76b",
   "texto-boton": "#241b04",
   error: "#e58481",
+  verde: "#22C55E",
+  "verde-hover": "#2FD471",
+  "verde-suave": "#14301F",
+  "verde-borde": "#2E6B45",
+  "verde-texto": "#0B1F13",
   "rol-docente-fondo": "#1a2130",
   "rol-docente-borde": "#2b3550",
   "rol-docente-texto": "#9db3e8",

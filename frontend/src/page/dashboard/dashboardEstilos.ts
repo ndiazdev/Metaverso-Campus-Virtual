@@ -395,6 +395,73 @@ export const ESTILOS_COMUNES = `
     min-width: 0;
   }
 
+  /* Envoltorio del buscador/filtros de CADA pestaña del panel de
+     administración: solo el de la pestaña activa se muestra. */
+  .dash-herramienta {
+    display: flex;
+    align-items: center;
+    min-width: 0;
+  }
+
+  /* ---------------------------------------------------------
+     PESTAÑAS DEL PANEL DE ADMIN: usuarios / clases / inscripciones
+     (una sola caja conmuta entre los tres listados)
+     --------------------------------------------------------- */
+
+  .dash-pestanas {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+
+  .dash-pestana {
+    display: inline-flex;
+    align-items: center;
+    gap: 7px;
+    padding: 7px 12px;
+    border: 1px solid var(--c-verde-borde);
+    border-radius: 8px;
+    background: var(--c-superficie);
+    color: var(--c-verde);
+    font-family: inherit;
+    font-size: 12.5px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease,
+      color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .dash-pestana:hover {
+    background: var(--c-verde-suave);
+    border-color: var(--c-verde);
+  }
+
+  .dash-pestana.activo {
+    background: var(--c-verde);
+    border-color: var(--c-verde);
+    color: var(--c-verde-texto);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--c-verde) 30%, transparent);
+  }
+
+  .dash-pestana-conteo {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 20px;
+    padding: 1px 6px;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--c-verde) 14%, transparent);
+    font-size: 11px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .dash-pestana.activo .dash-pestana-conteo {
+    background: color-mix(in srgb, var(--c-verde-texto) 24%, transparent);
+  }
+
   .dash-stat {
     background: var(--c-superficie);
     border: 1px solid var(--c-borde);
@@ -937,39 +1004,112 @@ export const ESTILOS_COMUNES = `
      MODALES
      --------------------------------------------------------- */
 
+  /* El font-family va AQUÍ y no solo en .dash-modal: el modal se
+     monta en <body> (fuera de .dash-overlay) y sin esta línea hereda
+     la fuente por defecto del navegador (serif) y se ve "con otra
+     fuente" respecto al resto del dashboard. */
   .dash-modal-fondo {
     position: fixed;
     inset: 0;
     z-index: 1100;
-    background: color-mix(in srgb, var(--c-texto) 32%, transparent);
+    background: color-mix(in srgb, var(--c-texto) 42%, transparent);
+    -webkit-backdrop-filter: blur(3px);
+    backdrop-filter: blur(3px);
     display: flex;
     align-items: center;
     justify-content: center;
     padding: 24px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+      Helvetica, Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
   }
 
   .dash-modal {
+    position: relative;
     background: var(--c-superficie);
     border: 1px solid var(--c-borde);
     border-radius: 14px;
-    padding: 28px;
-    width: 340px;
+    padding: 26px 28px 24px;
+    width: 380px;
     max-width: 100%;
+    max-height: calc(100vh - 48px);
+    overflow-y: auto;
     text-align: center;
+    color: var(--c-texto);
     box-shadow: 0 24px 60px color-mix(in srgb, var(--c-sombra) 22%, transparent);
   }
 
+  /* X de salida: cierra el modal sin crear nada (igual que ESC o
+     clic fuera). Siempre presente en la esquina superior derecha. */
+  .dash-modal-cerrar {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border: 1px solid var(--c-borde);
+    border-radius: 8px;
+    background: var(--c-superficie);
+    color: var(--c-texto-suave);
+    font-family: inherit;
+    font-size: 13px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .dash-modal-cerrar:hover {
+    background: var(--c-acento-suave);
+    border-color: var(--c-acento);
+    color: var(--c-acento-tinto);
+  }
+
   .dash-modal h3 {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
     color: var(--c-texto);
     font-size: 18px;
     font-weight: 600;
+    letter-spacing: -0.2px;
     margin: 0 0 8px 0;
+    padding: 0 22px;
+  }
+
+  /* Filete dorado: el mismo de los títulos de las .dash-card. */
+  .dash-modal h3::before {
+    content: "";
+    flex: none;
+    width: 3px;
+    height: 15px;
+    border-radius: 2px;
+    background: var(--c-acento);
   }
 
   .dash-modal p {
     color: var(--c-texto-suave);
     font-size: 13px;
     margin: 0 0 16px 0;
+  }
+
+  /* Etiqueta del campo, alineada a la izquierda como en el perfil. */
+  .dash-modal-etiqueta {
+    display: block;
+    text-align: left;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--c-texto-suave);
+    margin: 0 0 6px 0;
+  }
+
+  /* La salida (Cancelar/Cerrar) va SIEMPRE debajo del principal. */
+  .dash-modal .dash-boton-secundario {
+    width: 100%;
+    margin-top: 10px;
   }
 
   .dash-codigo-grande {
@@ -1016,6 +1156,7 @@ export const ESTILOS_COMUNES = `
   .dash-input-texto {
     letter-spacing: normal;
     text-transform: none;
+    text-align: left;
     font-family: inherit;
   }
 

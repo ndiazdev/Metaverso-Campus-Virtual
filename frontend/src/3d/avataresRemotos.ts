@@ -18,16 +18,21 @@
 // con esqueleto, y un clon SIN más comparte el esqueleto del
 // original. Si se dejara así, los clones se moverían al mismo
 // ritmo que el jugador local (y en concreto, todos Walking
-// cuando él camina). Por eso a cada clon se le pone
-// `skeleton = null`: la malla se dibuja en la pose de reposo y
+// cuando él camina). Por eso a cada clon se le pone un
+// esqueleto PROPIO (`skeleton.clone()`): se dibuja con piel y
 // queda independiente. Está verificado que el original no se
 // ve afectado (ver nota al pie del archivo).
 //
-// LIMITACIÓN CONOCIDA: sin esqueleto propio, el avatar remoto
-// no puede reproducir clips. Camina con un balanceo vertical y
-// el resto de acciones se leen en la etiqueta (sentado, ✋).
-// Cuando haya un .glb con esqueleto por usuario, esto se
-// sustituye por `skeleton.clone()` + clips re-apuntados.
+// OJO: la solución fácil `skeleton = null` NO vale en estos
+// .glb: sin esqueleto el cuerpo colapsa a un punto de 0.01 u
+// en el piso (el tamaño lo dan las matrices de los huesos;
+// medido: 0.01 u de crudo frente a 5.63 u con piel).
+//
+// LIMITACIÓN CONOCIDA: el avatar remoto no recibe clips, así
+// que queda en pose estática y camina solo con el balanceo
+// vertical de este módulo; el resto de acciones se leen en la
+// etiqueta (sentado, ✋). Cuando haya un .glb con esqueleto
+// por usuario, esto se sustituye por clips re-apuntados.
 //
 // ── POR QUÉ HAY QUE SUAVIZAR ────────────────────────────────
 // El otro envía 12 posiciones por segundo, pero la pantalla se
@@ -68,6 +73,8 @@ export interface ContextoAvataresRemotos {
   alCambiarConexion: (estado: EstadoConexion, detalle?: string) => void;
   /** El servidor no dejó entrar a esta persona en la clase. */
   alRechazar: (motivo: string) => void;
+  /** Alguien acaba de levantar la mano (transición de apagada → encendida). */
+  alAlzarMano?: (nombre: string) => void;
   /** Se ejecuta al salir de la partida (para no dejar listeners). */
   limpiadores: Array<() => void>;
 }
@@ -84,7 +91,7 @@ export interface AvataresRemotos {
 // ── Constantes de la escena ──────────────────────────────────
 
 /** Estatura del personaje en unidades del salón (la misma de personaje.ts). */
-const ALTURA_PERSONAJE_U = 5.605;
+const ALTURA_PERSONAJE_U = 5.892;
 
 /** A qué altura del suelo va la etiqueta con el nombre. */
 const ALTURA_ETIQUETA = ALTURA_PERSONAJE_U + 0.95;
@@ -121,6 +128,8 @@ const COLOR_POR_ROL: Record<Rol, string> = {
 /** Una persona ya dibujada en la escena. */
 interface AvatarRemoto {
   id: string;
+  /** Nombre visible: es el que se da en el aviso de "levantó la mano". */
+  nombre: string;
   raiz: BABYLON.TransformNode;
   etiqueta: BABYLON.Mesh;
   anillo: BABYLON.Mesh;
@@ -355,12 +364,28 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     );
 
     // El punto clave: sin esto el clon seguiría al esqueleto del jugador
-    // local y todos los avatares de la clase se moverían al unísono.
-    // `skeleton = null` deja la malla en su pose de reposo; el
-    // esqueleto del original NO se toca (cada malla tiene el suyo).
+    // local y todos los avatares de la clase se moverían al unísono. La
+    // solución es darle al clon un esqueleto PROPIO (un clone del original,
+    // compartido por todas las mallas de ESTE clon): se dibuja con piel y
+    // queda independiente. OJO: no vale con `skeleton = null`, que es lo
+    // simple — sin esqueleto estos .glb colapsan a un punto de 0.01 u en el
+    // piso, porque el tamaño del cuerpo lo dan las matrices de los huesos
+    // (medido con NullEngine: 0.01 u de vértices crudos frente a 5.63 u
+    // dibujados con piel). El esqueleto original NO se toca.
     const mallas = clon.getChildMeshes(false);
+    const esqueletos = new Map<BABYLON.Skeleton, BABYLON.Skeleton>();
     for (const malla of mallas) {
-      if (malla.skeleton) malla.skeleton = null;
+      const original = malla.skeleton;
+      if (original) {
+        let copia = esqueletos.get(original);
+        if (!copia) {
+          // clone(nombre): el nombre es obligatorio en la firma; se usa el
+          // del clon para poder identificarlo en la escena.
+          copia = original.clone(`${clon.name}_huesos`);
+          esqueletos.set(original, copia);
+        }
+        malla.skeleton = copia;
+      }
       malla.checkCollisions = false;
       malla.isPickable = false;
     }
@@ -383,11 +408,15 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
   // ---------------------------------------------------------------
 
   function fijarObjetivo(avatar: AvatarRemoto, estado: Participante["estado"]): void {
+    const manoAntes = avatar.manoAlzada;
     avatar.objetivo.set(estado.x, estado.y, estado.z);
     avatar.yawObjetivo = estado.yaw;
     avatar.caminando = estado.caminando;
     avatar.manoAlzada = estado.manoAlzada;
     avatar.sentado = estado.sentado;
+    // Solo la subida apagada → encendida (el primer estado de alguien que ya
+    // tenía la mano arriba no avisa: no es algo que "acaba de pasar").
+    if (estado.manoAlzada && !manoAntes) ctx.alAlzarMano?.(avatar.nombre);
   }
 
   function crearAvatar(participante: Participante): void {
@@ -399,13 +428,16 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
 
     const avatar: AvatarRemoto = {
       id: participante.id,
+      nombre: participante.nombre,
       raiz,
       etiqueta,
       anillo,
       objetivo: new BABYLON.Vector3(participante.estado.x, ctx.sueloY, participante.estado.z),
       yawObjetivo: participante.estado.yaw,
       caminando: false,
-      manoAlzada: false,
+      // Ya con el valor actual: así la primera llamada a fijarObjetivo no
+      // cuenta como "acaba de levantar la mano" (no dispara el aviso).
+      manoAlzada: participante.estado.manoAlzada,
       sentado: false,
       fase: Math.random() * Math.PI * 2,
       baseY: ctx.sueloY,
@@ -441,6 +473,15 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     borrarAnotacion(id);
 
     // dispose() en la raíz se lleva también sus hijos (el cuerpo).
+    // Los esqueletos clonados pertenecen SOLO a este avatar (están
+    // compartidos entre sus mallas, así que el dispose de la malla no
+    // los libera): se vacían aquí para no dejarlos colgados.
+    const huesosDelAvatar = new Set<BABYLON.Skeleton>();
+    for (const malla of avatar.raiz.getChildMeshes(false)) {
+      if (malla.skeleton) huesosDelAvatar.add(malla.skeleton);
+    }
+    for (const esqueleto of huesosDelAvatar) esqueleto.dispose();
+
     avatar.etiqueta.material?.dispose();
     avatar.etiqueta.dispose();
     avatar.anillo.material?.dispose();
@@ -723,6 +764,16 @@ function medidasDe(nodo: BABYLON.TransformNode): { alto: number; caja: number } 
       maxC = Math.max(maxC, esquina.y);
     }
 
+    // Con esqueleto los vértices crudos NO son lo que se dibuja (los mueve
+    // el skinning: medido, 0.01 u de crudo frente a 5.63 u con piel). Para
+    // esas mallas vale la caja que Babylon declaró, que sí refleja el
+    // cuerpo; el bucle de vértices solo se usa en mallas estáticas.
+    if (malla.skeleton) {
+      minV = Math.min(minV, minC);
+      maxV = Math.max(maxV, maxC);
+      continue;
+    }
+
     const datos = malla.getVerticesData(BABYLON.VertexBuffer.PositionKind);
     if (!datos) continue;
     const mundo = malla.getWorldMatrix();
@@ -752,14 +803,20 @@ function detalleDe(clon: BABYLON.TransformNode, mallas: BABYLON.AbstractMesh[]):
   return `CLON · ${mallas.length} mallas (${nombre}) · alto ${alto.toFixed(2)} u · caja ${caja.toFixed(2)} u · material ${listos}/${mallas.length}`;
 }
 //
-// Por qué `malla.skeleton = null` y no `malla.useBones = false`:
-// `useBones` en Babylon es un getter SIN setter (lanza si se intenta
-// asignar), y su valor sale de `_useBones && computeBonesUsingShaders
-// && skeleton`. Poner `skeleton` a null lo deja en falso y el material
-// se compila sin la macro SKIN: la malla se dibuja con sus coordenadas
-// de origen, o sea, la pose en la que se exportó el modelo.
+// Por qué un esqueleto CLONADO y no `malla.skeleton = null` (ni
+// `malla.useBones = false`, que además no existe como setter:
+// `useBones` en Babylon es un getter que sale de `_useBones &&
+// computeBonesUsingShaders && skeleton`, así que la única palanca
+// es el puntero `skeleton`):
+// ponerlo a null deja `useBones` en falso, el material se compila
+// sin la macro SKIN y la malla se dibuja con sus coordenadas de
+// origen… que en ESTOS .glb significan un punto de 0.01 u en el
+// piso: el cuerpo "de verdad" lo construye el skinning (medido con
+// NullEngine: 0.01 u de vértices crudos frente a 5.63 u dibujados
+// con piel). `skeleton.clone()` conserva la piel y, además, da al
+// clon huesos propios.
 //
 // Y nada de esto toca al jugador local: cada malla tiene su propio
-// puntero a esqueleto, así que ponerlo a null en el clon deja al
-// original con el suyo y sus animaciones siguen igual.
+// puntero a esqueleto, así que el clon (y su esqueleto copiado)
+// dejan al original con el suyo y sus animaciones siguen igual.
 // ---------------------------------------------------------------

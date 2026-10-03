@@ -1,5 +1,6 @@
 import type { Cuenta, Clase } from "../../state/estado";
 import { elegirSkin } from "../../ui/elegirSkin";
+import { escribirPantallaEnLaUrl } from "../../state/enlaceClase";
 import {
   crearDashboardComun,
   type DashboardComun,
@@ -15,16 +16,23 @@ export function mostrarDashboard(
   cuenta: Cuenta & { id?: number },
   alEntrarAClase: (clase: Clase) => void,
 ): void {
+  // La dirección identifica la pantalla: con sesión abierta el panel
+  // vive en /dashboard (si se llega con /login, se corrige sin
+  // recargar; la consigna de la barra es decir dónde se está).
+  escribirPantallaEnLaUrl("/dashboard");
+
   let comun: DashboardComun;
 
   // ---------------------------------------------------------------------
   // INTERCEPTOR ÚNICO: cada botón "Entrar" (clases del rol y panel de
-  // usuarios) pasa por aquí. Primero se elige la skin del rol en la
-  // mini-ventana y, al cerrarla, se continúa con la entrada a la clase.
-  // Así todos los dashboards comparten el mismo punto de interceptación.
+  // usuarios) pasa por aquí. La mini-ventana de skin y el salón arrancan
+  // A LA VEZ: el usuario ve el aula detrás del modal (antes salía todo en
+  // blanco) y el modelo 3D se carga al cerrar la ventana, con la skin que
+  // se eligió. Así todos los dashboards comparten el mismo punto.
   // ---------------------------------------------------------------------
   const entrarConSkin = (clase: Clase): void => {
-    void elegirSkin(cuenta.rol).then(() => alEntrarAClase(clase));
+    void elegirSkin(cuenta.rol);
+    alEntrarAClase(clase);
   };
 
   function mostrarClasesSegunRol(): void {

@@ -314,9 +314,24 @@ export async function mostrarDashboardDocente(
 
     modal.innerHTML = `
 
-      <div class="dash-modal">
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalClase"
+      >
 
-        <h3>
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalClase">
           ${t("docente.crearTitulo")}
         </h3>
 
@@ -325,6 +340,10 @@ export async function mostrarDashboardDocente(
           ${t("docente.crearTexto")}
         </p>
 
+
+        <label class="dash-modal-etiqueta" for="campoMateriaNueva">
+          ${t("perfil.materia")}
+        </label>
 
         <input
           class="dash-input-codigo dash-input-texto"
@@ -346,11 +365,50 @@ export async function mostrarDashboardDocente(
           ${t("docente.generarClase")}
         </button>
 
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("comun.cancelar")}
+        </button>
+
       </div>
 
     `;
 
     document.body.appendChild(modal);
+
+    // --------------------------------------------------------
+    // SALIDAS DEL MODAL: X, Cancelar, clic fuera y ESC.
+    // `conectarCierre` se repite después del éxito porque ahí se
+    // reescribe todo el HTML y los botones viejos quedan sin clic.
+    // --------------------------------------------------------
+
+    function cerrar(): void {
+      window.removeEventListener("keydown", alTecla, true);
+      modal.remove();
+    }
+
+    function alTecla(evento: KeyboardEvent): void {
+      if (evento.key === "Escape") {
+        evento.stopPropagation();
+        cerrar();
+      }
+    }
+
+    function conectarCierre(): void {
+      modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+        boton.addEventListener("click", cerrar);
+      });
+    }
+
+    conectarCierre();
+    window.addEventListener("keydown", alTecla, true);
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
 
     // ========================================================
     // ELEMENTOS DEL MODAL
@@ -448,9 +506,24 @@ export async function mostrarDashboardDocente(
 
         modal.innerHTML = `
 
-            <div class="dash-modal">
+            <div
+              class="dash-modal"
+              role="dialog"
+              aria-modal="true"
+              aria-labelledby="tituloModalClase"
+            >
 
-              <h3>
+              <button
+                type="button"
+                class="dash-modal-cerrar"
+                data-cerrar
+                aria-label="${t("comun.cerrar")}"
+                title="${t("comun.cerrar")}"
+              >
+                <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+              </button>
+
+              <h3 id="tituloModalClase">
                 ${t("docente.exitoTitulo")}
               </h3>
 
@@ -474,9 +547,19 @@ export async function mostrarDashboardDocente(
                 ${t("docente.entrarClase")}
               </button>
 
+              <button
+                type="button"
+                class="dash-boton-secundario"
+                data-cerrar
+              >
+                ${t("comun.cerrar")}
+              </button>
+
             </div>
 
           `;
+
+          conectarCierre();
 
         // ==================================================
         // ENTRAR A LA CLASE RECIÉN CREADA
@@ -487,7 +570,9 @@ export async function mostrarDashboardDocente(
 
         if (botonEntrarAhora) {
           botonEntrarAhora.addEventListener("click", () => {
-            modal.remove();
+            // `cerrar` suelta también el listener de ESC: si no,
+            // seguiría capturando la tecla dentro de la clase.
+            cerrar();
 
             overlay.remove();
 

@@ -1,4 +1,4 @@
-import { cerrarSesion, guardarSesion, obtenerToken } from "../../state/estado";
+import { cerrarSesion, guardarSesion, obtenerGeneroAvatar, obtenerToken } from "../../state/estado";
 import type { Cuenta, Rol } from "../../state/estado";
 
 import { API_URL } from "../../api/cliente";
@@ -19,26 +19,48 @@ export function etiquetaRol(rol: Rol): string {
   return t(`rol.${rol}`);
 }
 
-export const IMAGENES_ROL: Record<Rol, string> = {
-  docente:
-    "https://d2yoo3qu6vrk5d.cloudfront.net/pulzo-lite/images-resized/PP3946599-h-o.webp",
+/**
+ * Imágenes POR DEFECTO de cada rol, en `public/images`:
+ * F = femenino, M = masculino. Cuál aplica depende del género que
+ * la persona eligió para su skin (estado.ts → obtenerGeneroAvatar),
+ * igual que el resto del avatar. Si la cuenta tiene foto propia,
+ * esa manda (ver avatarDe).
+ */
+export const IMAGENES_ROL: Record<Rol, { femenino: string; masculino: string }> = {
+  admin: {
+    femenino: "/images/adminFimg.png",
+    masculino: "/images/adminMimg.png",
+  },
 
-  admin:
-    "https://d2yoo3qu6vrk5d.cloudfront.net/pulzo-lite/images-resized/PP3946599-h-o.webp",
+  docente: {
+    femenino: "/images/profeFimg.png",
+    masculino: "/images/profeMimg.png",
+  },
 
-  estudiante:
-    "https://cba.ucb.edu.bo/blog/wp-content/uploads/2021/04/desarrollo-programadores-desarrollo-tecnologias-diseno-codificacion-sitios-web_18497-1019.jpg",
+  estudiante: {
+    femenino: "/images/estuFimg.png",
+    masculino: "/images/estuMimg.png",
+  },
 
-  invitado:
-    "https://cba.ucb.edu.bo/blog/wp-content/uploads/2021/04/desarrollo-programadores-desarrollo-tecnologias-diseno-codificacion-sitios-web_18497-1019.jpg",
+  invitado: {
+    femenino: "/images/estuFimg.png",
+    masculino: "/images/estuMimg.png",
+  },
 };
 
 /**
  * Imagen de la cuenta: la foto propia si existe, o si no la
- * imagen genérica del rol.
+ * imagen predeterminada de su rol (según su género).
  */
 export function avatarDe(cuenta: Cuenta): string {
-  return cuenta.foto || IMAGENES_ROL[cuenta.rol];
+  if (cuenta.foto) return cuenta.foto;
+
+  const porDefecto =
+    IMAGENES_ROL[cuenta.rol] ?? IMAGENES_ROL.estudiante;
+
+  return obtenerGeneroAvatar() === "hombre"
+    ? porDefecto.masculino
+    : porDefecto.femenino;
 }
 
 /** Escapa comillas y símbolos antes de meter texto en el HTML. */

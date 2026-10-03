@@ -27,6 +27,8 @@ export const ES = {
   "comun.universidad": "Universidad Santo Tomás",
   "comun.avatar": "Avatar",
   "comun.usuario": "Usuario",
+  "comun.cancelar": "Cancelar",
+  "comun.cerrar": "Cerrar",
 
   // ---------- roles (mayúsculas, como los pinta el dashboard) ----------
   "rol.admin": "ADMINISTRADOR",
@@ -234,6 +236,17 @@ export const ES = {
   "login.msg.guardando": "Guardando...",
   "login.msg.errorRegistro": "Error al registrar la cuenta.",
 
+  // ---------- selección de skin (mini-ventana al entrar a la clase) ----------
+  "skin.titulo": "Elige tu personaje",
+  "skin.pista": "Skin de {conjunto} · se guarda para la próxima",
+  "skin.mujer": "Mujer",
+  "skin.hombre": "Hombre",
+  "skin.cerrar": "Cerrar",
+
+  // ---------- mano levantada (avatares remotos) ----------
+  "mano.aviso": "{nombre} levantó la mano",
+  "mano.avisoPropio": "El usuario ha alzado la mano",
+
 } as const;
 
 export type Clave = keyof typeof ES;
@@ -249,6 +262,8 @@ export const EN: Record<Clave, string> = {
   "comun.universidad": "Santo Tomás University",
   "comun.avatar": "Avatar",
   "comun.usuario": "User",
+  "comun.cancelar": "Cancel",
+  "comun.cerrar": "Close",
 
   // ---------- roles ----------
   "rol.admin": "ADMINISTRATOR",
@@ -449,6 +464,17 @@ export const EN: Record<Clave, string> = {
   "login.msg.contrasenaCorta": "The password must be at least 6 characters.",
   "login.msg.guardando": "Saving...",
   "login.msg.errorRegistro": "Could not create the account.",
+
+  // ---------- character picker (modal before joining the class) ----------
+  "skin.titulo": "Choose your character",
+  "skin.pista": "Skin for {conjunto} · saved for next time",
+  "skin.mujer": "Woman",
+  "skin.hombre": "Man",
+  "skin.cerrar": "Close",
+
+  // ---------- raised hand (remote avatars) ----------
+  "mano.aviso": "{nombre} raised their hand",
+  "mano.avisoPropio": "You have raised your hand",
 };
 
 /**

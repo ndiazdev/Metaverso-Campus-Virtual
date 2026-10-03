@@ -14,6 +14,7 @@ import { cargarPersonaje, type Personaje } from "./personaje";
 import { crearAvataresRemotos, type AvataresRemotos } from "./avataresRemotos";
 import { crearListadoConectados, type ListadoConectados } from "../ui/listadoConectados";
 import { leerClaseDeLaUrl, escribirClaseEnLaUrl } from "../state/enlaceClase";
+import { t } from "../state/idioma";
 import { obtenerClasePorCodigo } from "../api/servicios";
 import type { EstadoLocal, Participante } from "../red/presencia";
 // UI MODULAR: se importa como cualquier otra pieza, así cada mapa nuevo reutiliza
@@ -40,13 +41,24 @@ import {
 const canvas = document.querySelector<HTMLCanvasElement>("#renderCanvas")!;
 const engine = new BABYLON.Engine(canvas, true);
 
-const ALTURA_ADULTO_PIE = 7.7;
+// Escala a la que se importa el salón entero (cargarSalon la aplica a la raíz
+// del .glb justo al importarlo). El aula original medía 18.8 × 12.4 m con
+// muebles a tamaño real: el personaje (1.85 m) se perdía dentro, así que el
+// mapa baja al 85 % — 16 × 10.5 m, todavía grande — y el personaje sube a
+// 1.85 m (ver ALTURA_OBJETIVO_U en personaje.ts). TODAS las medidas del mapa
+// (límites, sillas, atril, rayos, techo) se leen después de aplicar esta
+// escala, así que las constantes de este archivo van ya multiplicadas.
+const ESCALA_SALON = 0.85;
 
 // Cara superior del suelo del salón. Medida con rayos (NullEngine) sobre el .glb:
-// room_primitive2 está en −0.789 en todo el salón (suelo plano). El personaje
-// camina con los PIES AQUÍ, no en 0: con los pies en 0 flotaba 0.789 u = 25 cm
-// sobre la laja.
-const SUELO_Y = -0.789;
+// room_primitive2 está en −0.789 en todo el salón (suelo plano); en el mundo
+// acaba en −0.789 × ESCALA_SALON. El personaje camina con los PIES AQUÍ, no
+// en 0: con los pies en 0 flotaba sobre la laja.
+const SUELO_Y = -0.789 * ESCALA_SALON;
+
+// Altura del OJO de un adulto de pie en el mundo (suelo + ojo de la persona
+// de 1.85 m): por aquí arranca la cámara antes de que cargue el cuerpo.
+const ALTURA_ADULTO_PIE = SUELO_Y + ALTURA_OJO_PROFESOR;
 
 // UI DE PROXIMIDAD
 const aviso = document.createElement("div");
@@ -304,12 +316,15 @@ let materialPantalla: BABYLON.StandardMaterial | null = null;
  * le tocaría por su altura (y como está toda por debajo del canto, no se mueve).
  * Los muebles sobre el suelo (escritorios, sillas, libreros, atril) no se tocan.
  */
-const SUBIR_TECHO = 2; // unidades del mundo. 0 lo apaga.
-const TECHO_SALON = 10.34; // cara de abajo del techo ORIGINAL, medida en el .glb
-const TOPE_PUERTA = 8.28; // canto superior del hueco de la puerta (muro bajo), en el .glb
+// Cotas del .glb, ya llevadas a unidades del mundo con ESCALA_SALON (se leen
+// sobre geometría ya escalada; el cociente FACTOR_TECHO no cambia al escalar
+// las tres juntas, así que el dibujo del techo es idéntico en proporción).
+const SUBIR_TECHO = 2 * ESCALA_SALON; // unidades del mundo. 0 lo apaga.
+const TECHO_SALON = 10.34 * ESCALA_SALON; // cara de abajo del techo ORIGINAL, medida en el .glb
+const TOPE_PUERTA = 8.28 * ESCALA_SALON; // canto superior del hueco de la puerta (muro bajo), en el .glb
 const FACTOR_TECHO =
   (TECHO_SALON + SUBIR_TECHO - TOPE_PUERTA) / (TECHO_SALON - TOPE_PUERTA);
-const UMBRAL_TECHO = 9.75; // red de seguridad por geometría (moldura 9.70 / borde 9.81)
+const UMBRAL_TECHO = 9.75 * ESCALA_SALON; // red de seguridad por geometría (moldura 9.70 / borde 9.81)
 
 /** Altura final de un punto: intacta bajo la puerta, estirada encima de ella. */
 function mapearAltura(y: number): number {
@@ -364,11 +379,11 @@ function subirElTechoDeLaSala(escena: BABYLON.Scene): void {
     const yMin = caja.minimumWorld.y;
 
     if (yMax < UMBRAL_TECHO) continue; // no llega a la banda del techo
-    if (yMax >= 15) continue; // el entorno "background" no se toca
-    if (!(ancho > 40 || fondo > 20)) continue; // no ocupa el salón entero
+    if (yMax >= 15 * ESCALA_SALON) continue; // el entorno "background" no se toca
+    if (!(ancho > 40 * ESCALA_SALON || fondo > 20 * ESCALA_SALON)) continue; // no ocupa el salón entero
 
-    const cascoDesdeElSuelo = yMin < 0.5; // muros (y techo si van en la misma pieza)
-    const losaSueltaArriba = yMin >= 9.5; // techo o moldura separados del muro
+    const cascoDesdeElSuelo = yMin < 0.5 * ESCALA_SALON; // muros (y techo si van en la misma pieza)
+    const losaSueltaArriba = yMin >= 9.5 * ESCALA_SALON; // techo o moldura separados del muro
     if (!cascoDesdeElSuelo && !losaSueltaArriba) continue;
 
     escaladas.add(malla);
@@ -523,9 +538,10 @@ function medirInteriorDelSalon(
       m.refreshBoundingInfo(false, false);
     }
 
-    // Orígenes: dentro de la caja de muebles, separada 1 unidad del borde.
+    // Orígenes: dentro de la caja de muebles, separada 1 unidad (a escala del
+    // .glb) del borde.
     const origen = cajaContenido ?? cajaRoom;
-    const inset = 1;
+    const inset = ESCALA_SALON;
     const minX = origen.min.x + inset;
     const maxX = origen.max.x - inset;
     const minZ = origen.min.z + inset;
@@ -536,7 +552,7 @@ function medirInteriorDelSalon(
     const centroZ = (minZ + maxZ) / 2;
     // Alturas sobre el suelo: por debajo del dintel de las ventanas y por encima de
     // mesas/sillas/atril (que además no están en la carcasa, así que no importan).
-    const alturas = [2, 2.6, 3.8].map((a) => cajaRoom.min.y + a);
+    const alturas = [2, 2.6, 3.8].map((a) => cajaRoom.min.y + a * ESCALA_SALON);
     const rayosPorAltura = 15;
     const alcance =
       Math.max(cajaRoom.max.x - cajaRoom.min.x, cajaRoom.max.z - cajaRoom.min.z) * 2;
@@ -606,6 +622,13 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
 
   const salon = resultado.meshes[0];
   salon.position = BABYLON.Vector3.Zero();
+  // El salón entero entra a ESCALA_SALON (raíz "__root__" del loader: multiplica
+  // mallas, empties y huesos de una vez, conservando el flip -Z de handedness).
+  // Se hace JUSTO DESPUÉS de importar y ANTES de medir nada: todos los rayos,
+  // límites, sillas y obstáculos de este función salen ya en unidades del
+  // mundo y calzan con lo que se ve en pantalla.
+  salon.scaling = salon.scaling.multiplyByFloats(ESCALA_SALON, ESCALA_SALON, ESCALA_SALON);
+  salon.computeWorldMatrix(true);
 
   paresSillas.length = 0;
   obstaculosSolidos.length = 0;
@@ -819,9 +842,9 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
     pantallaTablero.computeWorldMatrix(true);
     pantallaTablero.refreshBoundingInfo(false, false);
   } else {
-    pantallaTablero = BABYLON.MeshBuilder.CreatePlane("PantallaProyeccion", { width: 3.6, height: 1.8 }, scene);
+    pantallaTablero = BABYLON.MeshBuilder.CreatePlane("PantallaProyeccion", { width: 3.6 * ESCALA_SALON, height: 1.8 * ESCALA_SALON }, scene);
     pantallaTablero.material = materialPantalla;
-    pantallaTablero.position = new BABYLON.Vector3(20.91, 5.74, -1.09);
+    pantallaTablero.position = new BABYLON.Vector3(20.91, 5.74, -1.09).scale(ESCALA_SALON);
     pantallaTablero.isVisible = false;
   }
 
@@ -858,6 +881,19 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
       posSilla = meshSilla.absolutePosition.clone();
     }
 
+    // Rumbo de la silla: se descompone su matriz MUNDIAL (el flip de
+    // handedness del glTF queda absorbido en la descomposición — medido con
+    // NullEngine: −90° en todas las sillas del salón). Es el rumbo con el
+    // que hay que sentarse para quedar mirando al frente del puesto, sea
+    // cual sea el lado desde el que se llegue.
+    let rotSilla = NaN;
+    const escalaSilla = new BABYLON.Vector3();
+    const posDescompuesta = new BABYLON.Vector3();
+    const cuatSilla = new BABYLON.Quaternion();
+    if (meshSilla.getWorldMatrix().decompose(escalaSilla, cuatSilla, posDescompuesta)) {
+      rotSilla = cuatSilla.toEulerAngles().y;
+    }
+
     const nodoSit = mapaSits.get(num);
     let posSitFinal: BABYLON.Vector3;
     let rotYFinal = 0;
@@ -868,13 +904,14 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
       rotYFinal = nodoSit.rotationQuaternion ? nodoSit.rotationQuaternion.toEulerAngles().y : nodoSit.rotation.y;
     } else {
       posSitFinal = posSilla.clone();
-      posSitFinal.y += 2.2;
+      posSitFinal.y += 2.2 * ESCALA_SALON;
     }
 
     paresSillas.push({
       numero: num,
       posicionMundoSilla: posSilla,
       puntoSit: { posicion: posSitFinal, rotacionY: rotYFinal },
+      rotacionSilla: rotSilla,
     });
   });
 
@@ -911,8 +948,8 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
       rotEnsenar = nodoTeach.rotationQuaternion ? nodoTeach.rotationQuaternion.toEulerAngles().y : nodoTeach.rotation.y;
     } else {
       posEnsenar = posAtril.clone();
-      posEnsenar.y += 2.5; 
-      posEnsenar.z -= 0.5;
+      posEnsenar.y += 2.5 * ESCALA_SALON;
+      posEnsenar.z -= 0.5 * ESCALA_SALON;
     }
 
     atril = {
@@ -965,34 +1002,13 @@ function aplicarVolumenGlobal(): void {
 // ESCENA PRINCIPAL
 // ============================================================
 
-const createScene = async function (): Promise<BABYLON.Scene> {
+const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => void): Promise<BABYLON.Scene> {
   const scene = new BABYLON.Scene(engine);
   scene.gravity = new BABYLON.Vector3(0, -0.15, 0);
   scene.collisionsEnabled = true;
   scene.clearColor = new BABYLON.Color4(0.75, 0.85, 0.95, 1);
 
-  // 1. CARGAR EL PERSONAJE 3D (la skin la eligió el usuario en la mini-ventana
-  //    al pulsar "Entrar": rol + género guardados en localStorage).
-  let personaje: Personaje | null = null;
-  try {
-    personaje = await cargarPersonaje(scene, obtenerSesion()?.rol ?? "estudiante");
-    personaje.raiz.position = new BABYLON.Vector3(0, SUELO_Y, -8);
-
-    // CUERPO DE COLISIÓN DEL PERSONAJE (lo que lleva moveWithCollisions).
-    // No usa la geometría del modelo, usa este elipsoide:
-    //   radio (0.55, 2.3, 0.55) + offset (0, 2.6, 0)  =>  ocupa de SUELO_Y+0.30
-    //   (= −0.489) a SUELO_Y+4.90 (= 4.111): casi el cuerpo entero de 1.76 m,
-    //   y con 0.30 de holgura bajo el pie para no engancharse en lajas ni cantos.
-    // Choca con room (-0.81..10.32) y con los muros invisibles "limite*".
-    // Mesas, sillas y atril NO pasan por aquí: los resuelve empujarFueraDeObstaculos()
-    // porque el motor de colisiones se atasca dentro de las lajas finas (ver ObstaculoSolido).
-    personaje.raiz.ellipsoid = new BABYLON.Vector3(0.55, 2.3, 0.55);
-    personaje.raiz.ellipsoidOffset = new BABYLON.Vector3(0, 2.6, 0);
-  } catch (error) {
-    console.error("Error al cargar el personaje:", error);
-  }
-
-  // 2. CONFIGURAR LA CÁMARA
+  // 1. CONFIGURAR LA CÁMARA
   const camara = new BABYLON.UniversalCamera("camara", new BABYLON.Vector3(0, ALTURA_ADULTO_PIE, -8), scene);
   camara.attachControl(canvas, true);
   camara.speed = 0.35;
@@ -1017,6 +1033,12 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   const luz = new BABYLON.HemisphericLight("luz", new BABYLON.Vector3(0, 1, 0), scene);
   luz.intensity = 0.9;
 
+  // 2. EL BUCLE DE RENDER ARRANCA YA, con la cámara y la luz listas. Así el
+  //    usuario ve el aula mientras carga (y DETRÁS de la ventana de skin, que
+  //    sigue abierta en el panel): antes no se dibujaba nada hasta que
+  //    terminaba de cargar el personaje y se veía una pantalla en blanco.
+  alRenderizar(scene);
+
   await cargarSalon(scene);
 
   // TABLERO. El mapa solo aporta la malla y el material que ya midió en su .glb
@@ -1037,6 +1059,28 @@ const createScene = async function (): Promise<BABYLON.Scene> {
   sueloColision.position = new BABYLON.Vector3(0, SUELO_Y, 0);
   sueloColision.checkCollisions = true;
   sueloColision.isVisible = false;
+
+  // 3. CARGAR EL PERSONAJE 3D. Va DESPUÉS del salón (el aula se ve ya detrás
+  //    de la ventana de skin) y ESPERA a que se cierre esa ventana antes de
+  //    leer la skin elegida (esperarSkinPendiente dentro de cargarPersonaje).
+  let personaje: Personaje | null = null;
+  try {
+    personaje = await cargarPersonaje(scene, obtenerSesion()?.rol ?? "estudiante");
+    personaje.raiz.position = new BABYLON.Vector3(0, SUELO_Y, -8);
+
+    // CUERPO DE COLISIÓN DEL PERSONAJE (lo que lleva moveWithCollisions).
+    // No usa la geometría del modelo, usa este elipsoide:
+    //   radio (0.55, 2.42, 0.55) + offset (0, 2.73, 0)  =>  ocupa de SUELO_Y+0.31
+    //   a SUELO_Y+5.15: el cuerpo entero de 1.85 m (5.892 u), con 0.31 de
+    //   holgura bajo el pie para no engancharse en lajas ni cantos.
+    // Choca con room y con los muros invisibles "limite*".
+    // Mesas, sillas y atril NO pasan por aquí: los resuelve empujarFueraDeObstaculos()
+    // porque el motor de colisiones se atasca dentro de las lajas finas (ver ObstaculoSolido).
+    personaje.raiz.ellipsoid = new BABYLON.Vector3(0.55, 2.42, 0.55);
+    personaje.raiz.ellipsoidOffset = new BABYLON.Vector3(0, 2.73, 0);
+  } catch (error) {
+    console.error("Error al cargar el personaje:", error);
+  }
 
   // ---------------------------------------------------------------
   // FUNCIONALIDADES DEL AVATAR → src/3d/funcionalidades.ts
@@ -1208,6 +1252,11 @@ const createScene = async function (): Promise<BABYLON.Scene> {
     alRechazar: (motivo) => {
       listado?.avisar(motivo);
       barra?.mostrarGlobo(motivo);
+    },
+    alAlzarMano: (nombre) => {
+      // "Alguien levantó la mano" sale en la burbuja de la barra (la misma
+      // que los mensajes de cámara/micro): avisa a todos los de la clase.
+      barra?.mostrarGlobo(t("mano.aviso", { nombre }));
     },
     limpiadores: limpiadoresDePartida,
   });
@@ -1416,14 +1465,12 @@ function entrarAlSalon(clase: Clase) {
   window.addEventListener("resize", alRedimensionar);
   limpiadoresDePartida.push(() => window.removeEventListener("resize", alRedimensionar));
 
-  createScene()
-    .then((scene) => {
-      engine.runRenderLoop(() => scene.render());
-    })
-    .catch((error) => {
-      console.error("ERROR AL CREAR LA ESCENA:", error);
-      alert("Ocurrió un error cargando el salón. Revisa la consola (F12).");
-    });
+  createScene((escena) => {
+    engine.runRenderLoop(() => escena.render());
+  }).catch((error) => {
+    console.error("ERROR AL CREAR LA ESCENA:", error);
+    alert("Ocurrió un error cargando el salón. Revisa la consola (F12).");
+  });
 }
 
 // -----------------------------------------------------------------------

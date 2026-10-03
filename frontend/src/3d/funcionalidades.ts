@@ -23,6 +23,7 @@
 
 import * as BABYLON from "babylonjs";
 import type { Personaje } from "./personaje";
+import { t } from "../state/idioma";
 import type { PuntoMundo } from "./tableroFuncionalidad";
 
 // VELOCIDAD DE CAMINADO, en unidades por SEGUNDO.
@@ -36,9 +37,16 @@ export const VELOCIDAD_CAMINAR = 4.0;
 export const RADIO_PERSONAJE = 0.55;
 
 // Altura del OJO sobre el suelo cuando se va al atril sin cuerpo cargado
-// (cámara suelta): 5.09 u — la misma que fija el salón para una persona de
-// 1.76 m (ojo a 1.60 m; empty TEACH_01). Se suma a ctx.sueloY.
-export const ALTURA_OJO_PROFESOR = 5.09;
+// (cámara suelta): 5.35 u — el ojo de una persona de 1.85 m (ojo ≈ 1.68 m;
+// la misma proporción de antes, 1.60/1.76). Se suma a ctx.sueloY.
+export const ALTURA_OJO_PROFESOR = 5.35;
+
+// Holgura al apoyar la cadera en el asiento, en unidades del salón (0.09 m):
+// es la separación entre la articulación de la cadera y la culata que la
+// propia pose de sentado ya trae (cadera−pies mide 0.44 m, la altura real de
+// las sillas del salón). Sin ella, la culata quedaría 9 cm hundida en el
+// tablero del asiento.
+export const HOLGURA_CADERA_U = 0.09 / 0.314;
 
 // ---------------------------------------------------------------
 // Tipos del mundo con los que trabaja cualquier mapa
@@ -48,6 +56,14 @@ export interface ParSilla {
   numero: number;
   posicionMundoSilla: BABYLON.Vector3;
   puntoSit: { posicion: BABYLON.Vector3; rotacionY: number };
+  /**
+   * Rumbo (yaw) de la PROPIA silla en el mundo: es "el frente" del puesto.
+   * Medido en el mapa actual: todas las sillas están giradas a −90° y su
+   * mesa queda justo en ese lado, así que al sentarse con este rumbo el
+   * cuerpo mira a su mesa (y de paso al pizarrón) de donde se llegue.
+   * NaN si la matriz de la silla no se pudo descomponer.
+   */
+  rotacionSilla: number;
 }
 
 export interface Atril {
@@ -228,9 +244,15 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     const personaje = ctx.personaje();
     if (!personaje) return;
     const yaw = ctx.camara.rotation.y;
-    const offsetActual = modoTerceraPersona
+    // Sentado, la cámara baja con el cuerpo: valen los empties del clip de
+    // sentarse si los hay (si no —o si no hay clip—, siguen los de pie).
+    const offsetDePie = modoTerceraPersona
       ? (personaje.offsetTerceraPersona || new BABYLON.Vector3(0, 2.5, -4))
       : (personaje.offsetPrimeraPersona || new BABYLON.Vector3(0, 1.7, 0.2));
+    const offsetEnSilla = modoTerceraPersona
+      ? personaje.offsetTerceraPersonaSentado
+      : personaje.offsetPrimeraPersonaSentado;
+    const offsetActual = sentado && offsetEnSilla ? offsetEnSilla : offsetDePie;
 
     const matrizRotacion = BABYLON.Matrix.RotationY(yaw);
     const offsetMundo = BABYLON.Vector3.TransformCoordinates(offsetActual, matrizRotacion);
@@ -362,20 +384,65 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
         ? personaje.raiz.position.clone()
         : ctx.camara.position.clone();
       rotacionGuardada = ctx.camara.rotation.y;
+      const punto = parCercano.puntoSit;
 
-      // La cámara va al punto de OJO del empty sit_*; el cuerpo va a la misma XZ
-      // pero con los PIES en el suelo real del mapa (SUELO_Y), si no quedaba
-      // hundido en el suelo o flotando.
-      ctx.camara.position = parCercano.puntoSit.posicion.clone();
-      if (personaje) {
-        personaje.raiz.position = new BABYLON.Vector3(
-          parCercano.puntoSit.posicion.x,
-          ctx.sueloY,
-          parCercano.puntoSit.posicion.z
-        );
+      // "El frente" del puesto: el rumbo de la PROPIA silla (en el mapa
+      // actual, −90°, con la mesa justo a ese lado). Vengas desde donde
+      // vengas — de lado, por detrás… — al sentarte el cuerpo queda mirando
+      // al frente de SU puesto y la mirada arranca hacia ahí también (al
+      // levantarse, la cámara vuelve a rotacionGuardada como siempre). Sin
+      // rumbo fiable se conserva el de la cámara, como antes.
+      let yaw = ctx.camara.rotation.y;
+      if (Number.isFinite(parCercano.rotacionSilla)) {
+        yaw = parCercano.rotacionSilla;
       }
 
+      // Se marca ANTES de tocar la cámara: así pegarCamaraAlCuerpo ya usa los
+      // offsets de sentado.
       sentado = true;
+      // La cámara también arranca al frente (igual que al subir al atril con
+      // R): en 3ª persona queda detrás del cuerpo y en 1ª se ve la mesa.
+      ctx.camara.rotation.y = yaw;
+
+      if (personaje) {
+        if (personaje.raiz.rotationQuaternion) {
+          const base = personaje.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity();
+          personaje.raiz.rotationQuaternion =
+            BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, yaw).multiply(base);
+        } else {
+          personaje.raiz.rotation.y = yaw;
+        }
+
+        if (personaje.offsetCaderaSentado) {
+          // La CADERA del clip sentado se apoya en el punto sit_* (los empties
+          // están marcados a la altura de la culata): la raíz es el punto menos
+          // el offset de cadera girado al rumbo del cuerpo, de modo que la
+          // pelvis cae EXACTAMENTE en el asiento con cualquier orientación.
+          const cadera = personaje.offsetCaderaSentado.subtract(
+            new BABYLON.Vector3(0, HOLGURA_CADERA_U, 0)
+          );
+          const girada = BABYLON.Vector3.TransformCoordinates(
+            cadera,
+            BABYLON.Matrix.RotationY(yaw)
+          );
+          personaje.raiz.position = punto.posicion.subtract(girada);
+        } else {
+          // Sin clip de sentarse: como siempre, a la XZ de la silla con los
+          // pies en el suelo real del mapa (SUELO_Y).
+          personaje.raiz.position = new BABYLON.Vector3(
+            punto.posicion.x,
+            ctx.sueloY,
+            punto.posicion.z
+          );
+        }
+      } else {
+        // Sin cuerpo cargado (cámara suelta), la cámara va al punto tal cual.
+        ctx.camara.position = punto.posicion.clone();
+      }
+
+      // La cámara (1ª o 3ª) se deriva del cuerpo con los offsets de sentado.
+      pegarCamaraAlCuerpo();
+
       ctx.aviso.style.display = "none";
     } else if (sentado) {
       if (posicionGuardada && personaje) {
@@ -384,6 +451,8 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       }
       ctx.camara.rotation.y = rotacionGuardada;
       sentado = false;
+      // De golpe la cámara vuelve a los offsets de pie sobre el cuerpo guardado.
+      pegarCamaraAlCuerpo();
     }
     ctx.alCambiarEstado();
   }
@@ -391,6 +460,9 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   function alternarMano(): void {
     manoAlzada = !manoAlzada;
     if (manoAlzada) {
+      // El texto se repite aquí (y no solo al montar la página) para que
+      // siga en el idioma correcto si el usuario cambió de idioma.
+      ctx.avisoMano.innerText = t("mano.avisoPropio");
       ctx.avisoMano.style.display = "block";
       if (temporizadorMano) clearTimeout(temporizadorMano);
       temporizadorMano = window.setTimeout(() => {
@@ -409,11 +481,12 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   // MÁQUINA DE ANIMACIÓN + SALUDO
   // -----------------------------------------------------------------------
   /**
-   * Elige el clip que debe sonar en este frame. Prioridad: sentado → caminar
+   * Elige el clip que debe sonar en este frame. Prioridad: sentado (con la
+   * mano si está alzada y hay clip de mano sentado) → caminar → mano alzada
    * → saludar (mano arriba o emote) → parado. Si el slot pedido no existe
-   * (hoy: caminar/sentarse/saludar; el .glb solo trae "parado") se cae a
-   * "parado" para que no siga sonando el clip anterior — p. ej. caminando
-   * mientras se está sentado.
+   * (los .glb externos de /models/animacion/ cubren caminar/sentarse/saludar
+   * y la mano; lo que falte se cae a "parado") se cae a "parado" para que no
+   * siga sonando el clip anterior — p. ej. caminando mientras se está sentado.
    */
   function aplicarAnimacion(): void {
     const personaje = ctx.personaje();
@@ -428,20 +501,26 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     }
 
     const preferido = sentado
-      ? anim.sentarse
+      ? manoAlzada && anim.manoSentado
+        ? anim.manoSentado
+        : anim.sentarse
       : moviendose
         ? anim.caminar
-        : manoAlzada || saludando
-          ? anim.saludar
-          : null;
+        : manoAlzada
+          ? (anim.manoParado ?? anim.saludar)
+          : saludando
+            ? anim.saludar
+            : null;
     const deseado = (preferido ?? anim.parado) || null;
 
     if (!deseado || deseado === grupoAnimado) return;
     grupoAnimado?.stop();
     grupoAnimado = deseado;
-    // El clip de sentarse es una pose con final (no en bucle); todos los
-    // demás —parado, caminar, saludar— se repiten.
-    deseado.play(deseado !== anim.sentarse);
+    // En bucle: parado, caminar, saludar y la mano de pie (medido: el clip de
+    // mano de pie levanta el brazo, lo sujeta ~2.5 s y vuelve a reposo, así
+    // que al repetirlo vuelve a levantarse). Sin bucle: sentarse y la mano
+    // sentada (medido: ese clip TERMINA con la mano arriba y se queda ahí).
+    deseado.play(deseado !== anim.sentarse && deseado !== anim.manoSentado);
   }
 
   /** Saludo rápido (emote 👋): mueve el brazo 3.5 s sin tocar la mano alzada (H). */
@@ -579,10 +658,10 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     // va aparte: es lo que impide que el vídeo tape al personaje.
     ctx.alActualizarTablero(siluetaDeLaPersona());
 
-    // EN EL ATRIL: el cuerpo no camina (WASD está anulado), pero la cámara sigue
-    // pegada a él. Sin esta línea, B (1ª/3ª persona) y el giro del ratón quedarían
-    // congelados mientras presentas.
-    if (enEscritorio) pegarCamaraAlCuerpo();
+    // EN EL ATRIL O SENTADO: el cuerpo no camina (WASD está anulado), pero la
+    // cámara sigue pegada a él. Sin esta línea, B (1ª/3ª persona) y el giro del
+    // ratón quedarían congelados mientras presentas o te sientas.
+    if (enEscritorio || sentado) pegarCamaraAlCuerpo();
 
     if (sentado || enEscritorio) {
       ctx.alCambiarEstado();

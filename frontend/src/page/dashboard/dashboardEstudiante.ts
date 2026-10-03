@@ -207,8 +207,9 @@ export async function mostrarDashboardEstudiante(
     const modal = document.createElement("div");
     modal.className = "dash-modal-fondo";
     modal.innerHTML = `
-      <div class="dash-modal">
-        <h3>${t("estudiante.modalTitulo")}</h3>
+      <div class="dash-modal" role="dialog" aria-modal="true" aria-labelledby="tituloModalClase">
+        <button type="button" class="dash-modal-cerrar" data-cerrar aria-label="${t("comun.cerrar")}" title="${t("comun.cerrar")}"><i class="fa-solid fa-xmark" aria-hidden="true"></i></button>
+        <h3 id="tituloModalClase">${t("estudiante.modalTitulo")}</h3>
         <p>${t("estudiante.modalAyuda")}</p>
         <input class="dash-input-codigo" id="campoCodigoUnirse" placeholder="${t("estudiante.modalPlaceholder")}" />
         <p class="dash-error" id="errorModal"></p>
@@ -216,6 +217,29 @@ export async function mostrarDashboardEstudiante(
       </div>
     `;
     document.body.appendChild(modal);
+
+    // Salidas: X, clic fuera y ESC (no hay nada que confirmar al salir).
+    function cerrar(): void {
+      window.removeEventListener("keydown", alTecla, true);
+      modal.remove();
+    }
+
+    function alTecla(evento: KeyboardEvent): void {
+      if (evento.key === "Escape") {
+        evento.stopPropagation();
+        cerrar();
+      }
+    }
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    window.addEventListener("keydown", alTecla, true);
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
 
     const campoCodigo = modal.querySelector<HTMLInputElement>("#campoCodigoUnirse")!;
     const errorModal = modal.querySelector<HTMLParagraphElement>("#errorModal")!;
@@ -248,7 +272,8 @@ export async function mostrarDashboardEstudiante(
           return;
         }
 
-        modal.remove();
+        // `cerrar` suelta también el listener de ESC.
+        cerrar();
         // Refresca la lista de clases inscritas para que aparezca la nueva
         mostrarDashboardEstudiante(opciones);
       } catch (error) {
