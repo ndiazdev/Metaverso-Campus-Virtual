@@ -22,14 +22,19 @@
 // ============================================================
 
 import * as BABYLON from "babylonjs";
-import type { Personaje } from "./personaje";
+import { ALTURA_OBJETIVO_BASE, ALTURA_OBJETIVO_U, type Personaje } from "./personaje";
 import { t } from "../state/idioma";
 import type { PuntoMundo } from "./tableroFuncionalidad";
 
-// VELOCIDAD DE CAMINADO, en unidades por SEGUNDO.
-// Antes era `0.15` por FRAME, así que dependía del monitor: a 60 fps eran 9 u/s (un
-// trote) y a 144 Hz ¡21,6 u/s! Se multiplica por el tiempo real de cada frame, de modo
-// que va igual en cualquier equipo. Baja el número si aún te parece rápido.
+// VELOCIDAD DE CAMINADO, en unidades por SEGUNDO, MEDIDA SOBRE LA ESTATURA BASE
+// (5.892 u = 1.85 m): 4.0 u/s ≈ 1.26 m/s, paso normal. Antes era `0.15` por
+// FRAME, así que dependía del monitor: a 60 fps eran 9 u/s (un trote) y a 144 Hz
+// ¡21,6 u/s! Se multiplica por el tiempo real de cada frame, de modo que va igual
+// en cualquier equipo. Al usarse se escala por la estatura ACTIVA (×
+// ALTURA_OBJETIVO_U / ALTURA_OBJETIVO_BASE): hoy todos los mapas usan la
+// estatura base (factor 1, sale 4.0 u/s tal cual), y si algún mapa usara otra
+// estatura el paso real se mantiene en 1.26 m/s — sin esa escala un cuerpo
+// grande caminaría arrastrado (lo de "camina muy lento").
 export const VELOCIDAD_CAMINAR = 4.0;
 
 // Radio (XZ) del cuerpo usado para chocar. Coincide con el radio del elipsoide
@@ -138,6 +143,13 @@ export interface EstadoFuncionalidades {
   manoAlzada: boolean;
   cercaDeSilla: boolean;
   cercaDelAtril: boolean;
+  /**
+   * Rumbo del CUERPO (no de la cámara): es lo que hay que publicar por la red.
+   * Sentado o en el atril el cuerpo queda fijo mientras la cámara libre sigue
+   * la mirada del ratón; si se publicara la cámara, los demás verían el avatar
+   * girando sobre su eje.
+   */
+  rumbo: number;
 }
 
 export interface Funcionalidades {
@@ -170,6 +182,8 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   let cercaDelAtril = false;
   let posicionGuardada: BABYLON.Vector3 | null = null;
   let rotacionGuardada = 0;
+  /** Rumbo del cuerpo mientras está fijo (sentado o en el atril). */
+  let rumboFijo = 0;
   let manoAlzada = false;
   let temporizadorMano: number | null = null;
 
@@ -204,7 +218,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   // -----------------------------------------------------------------------
   // SILUETA DEL PERSONAJE (para el tablero)
   //
-  // El <iframe> de YouTube y el lienzo de escritura son HTML y se pintan
+  // El <iframe> de YouTube y el papel de notas son HTML y se pintan
   // SIEMPRE encima del canvas 3D: al mirar de frente la cabeza del personaje
   // quedaba tapada por el vídeo. Aquí se le entregan al tablero los huesos del
   // esqueleto (posición de MUNDO, ya con la escala y la rotación del modelo)
@@ -345,6 +359,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       // La orientación se mantiene mientras dura el atril (el tablero, a la espalda),
       // aunque el usuario gire la cabeza para mirar a los estudiantes.
       ctx.camara.rotation.y = rumbo;
+      rumboFijo = rumbo;
       if (personaje) {
         personaje.raiz.position.copyFrom(detrasDelAtril);
         if (personaje.raiz.rotationQuaternion) {
@@ -403,6 +418,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       // La cámara también arranca al frente (igual que al subir al atril con
       // R): en 3ª persona queda detrás del cuerpo y en 1ª se ve la mesa.
       ctx.camara.rotation.y = yaw;
+      rumboFijo = yaw;
 
       if (personaje) {
         if (personaje.raiz.rotationQuaternion) {
@@ -547,7 +563,11 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       // sitio si el navegador se queda sin frames (cambio de pestaña, pantalla de
       // carga...): sin él, una pausa de 2 s mandaría al personaje 8 unidades más allá.
       const dt = Math.min(ctx.escena.getEngine().getDeltaTime() / 1000, 0.05);
-      const velocidad = VELOCIDAD_CAMINAR * dt;
+      // Escala con la estatura activa: 4 u/s sobre 5.892 u = 1.26 m/s. Hoy todos
+      // los mapas son de estatura base (factor 1); si un mapa usara otra estatura,
+      // el paso real sigue siendo 1.26 m/s (sin esto se arrastraba).
+      const velocidad =
+        VELOCIDAD_CAMINAR * (ALTURA_OBJETIVO_U / ALTURA_OBJETIVO_BASE) * dt;
 
       // IMPORTANTE: la raíz glTF tiene rotationQuaternion, y en ese caso Babylon ignora
       // raiz.rotation por completo. Usamos el cuaternión (y preservamos la rotación base
@@ -734,6 +754,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       manoAlzada,
       cercaDeSilla: Boolean(parCercano),
       cercaDelAtril,
+      rumbo: sentado || enEscritorio ? rumboFijo : ctx.camara.rotation.y,
     }),
     destruir: () => {
       if (temporizadorMano) clearTimeout(temporizadorMano);

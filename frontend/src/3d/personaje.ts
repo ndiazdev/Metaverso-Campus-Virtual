@@ -14,6 +14,12 @@ import { montarAnimaciones, type AnimacionesPersonaje } from "./animaciones";
 // (guardada por estado.ts) deciden qué archivo se carga de este catálogo.
 export interface Personaje {
   raiz: BABYLON.AbstractMesh;
+  /**
+   * Clave de skin (rol+género) de ESTE cuerpo. Los avatares remotos la
+   * usan para clonar el cuerpo que le toca a cada persona en vez de
+   * copiar siempre el del jugador local.
+   */
+  clave: string;
   // Rotación base que le pone el loader glTF a la raíz (__root__): convierte el sistema
   // diestro de glTF al zurdo de Babylon. SIEMPRE hay que conservarla al girar el personaje.
   rotacionBaseRaiz: BABYLON.Quaternion | null;
@@ -54,7 +60,19 @@ export interface Personaje {
 // .glb desde Mixamo (u otro sitio) con otra escala, la persona sigue midiendo
 // 1.85 m sin tocar nada. Éste es el único número que hay que tocar para
 // cambiar la estatura.
-const ALTURA_OBJETIVO_U = 5.892; // 1.85 m de persona a 0.314 m por unidad del salón
+// Estatura normal del personaje: 1.85 m de persona a 0.314 m por unidad del salón.
+export const ALTURA_OBJETIVO_BASE = 5.892;
+
+// Estatura ACTIVA en el mapa en curso. Por defecto la base; los mapas de prueba
+// con el salón amplio (CODIGOS_SALON_DE_PRUEBA en metaverso.ts) fijan aquí una
+// estatura bastante mayor para que la cadera del personaje quede a la altura de
+// los pupitres. La fija metaverso al entrar en la clase (fijarAlturaPersonaje)
+// y la vuelve a la base al entrar en cualquier otra clase.
+export let ALTURA_OBJETIVO_U = ALTURA_OBJETIVO_BASE;
+
+export function fijarAlturaPersonaje(altura: number): void {
+  ALTURA_OBJETIVO_U = altura;
+}
 
 // ── CATÁLOGO DE SKINS ────────────────────────────────────────────────────────
 // clave: `${conjunto}-${género}` → qué archivos probar, en orden.
@@ -128,7 +146,7 @@ const CATALOGO: Record<string, Skin> = {
   },
 };
 
-function claveSkin(rol: Rol, genero: GeneroAvatar): string {
+export function claveSkin(rol: Rol, genero: GeneroAvatar): string {
   // admin → sus propios modelos; invitado cae en el conjunto estudiante.
   const conjunto = rol === "admin" ? "admin" : rol === "docente" ? "docente" : "estudiante";
   return `${conjunto}-${genero}`;
@@ -169,13 +187,17 @@ function vaciar(r: BABYLON.ISceneLoaderAsyncResult): void {
 export async function cargarPersonaje(
   scene: BABYLON.Scene,
   rol: Rol = "estudiante",
+  // Los cuerpos de los REMOTOS se piden con el género de ESA persona; el
+  // del jugador local (sin tercer argumento) sigue saliendo de su sesión.
+  generoElegido?: GeneroAvatar,
 ): Promise<Personaje> {
   // Espera a que se cierre la ventana de skin (si sigue abierta): así el
   // salón ya se está viendo detrás del modal y el género que se lee aquí es
   // el que acaba de elegir el usuario en ESTA sesión.
   await esperarSkinPendiente();
-  const genero = obtenerGeneroAvatar();
-  const skin = CATALOGO[claveSkin(rol, genero)] ?? CATALOGO["estudiante-mujer"]!;
+  const genero = generoElegido ?? obtenerGeneroAvatar();
+  const clave = claveSkin(rol, genero);
+  const skin = CATALOGO[clave] ?? CATALOGO["estudiante-mujer"]!;
 
   // ── CARGAR CON RESPALDO ────────────────────────────────────────────────────
   // Se prueban los candidatos en orden: si un archivo no existe (404) o existe
@@ -197,7 +219,7 @@ export async function cargarPersonaje(
   }
   if (!resultado) {
     throw new Error(
-      `No hay ningún modelo de personaje utilizable para la skin "${claveSkin(rol, genero)}". ` +
+      `No hay ningún modelo de personaje utilizable para la skin "${clave}". ` +
         `Faltan: ${skin.archivos.join(", ")}`,
     );
   }
@@ -300,12 +322,12 @@ export async function cargarPersonaje(
   );
   console.log(
     `[personaje] altura ${alturaBruta.toFixed(3)} u → ×${escalaCalculada.toFixed(3)} = ` +
-      `${ALTURA_OBJETIVO_U} u (1.85 m a 0.314 m por unidad del salón)`,
+      `${ALTURA_OBJETIVO_U.toFixed(2)} u (estatura activa del mapa)`,
   );
   forzarMatrizMundo(raiz);
 
   // Si el .glb no trae Empties (los export de Mixamo no los traen), valen éstos,
-  // calculados para una persona de ALTURA_OBJETIVO_U (5.892 u = 1.85 m) en
+  // calculados para una persona de ALTURA_OBJETIVO_BASE (5.892 u = 1.85 m) en
   // unidades del salón:
   //  · primera persona: la altura del ojo de una persona de 1.85 m
   //    (≈1.68 m sobre el suelo → 5.35 u), un pelín por delante para que la
@@ -313,8 +335,13 @@ export async function cargarPersonaje(
   //  · tercera persona: la misma proporción que ya se veía con el modelo
   //    anterior (alto 2/2.05 y distancia 3/2.05 de la estatura) aplicada a
   //    5.892 u, para conservar el encuadre de siempre.
-  let offsetPrimeraPersona = new BABYLON.Vector3(0, 5.35, 0.15);
-  let offsetTerceraPersona = new BABYLON.Vector3(0, 5.78, -8.62);
+  // Si el mapa de prueba usa una estatura mayor, estos offsets se escalan con
+  // ella para que la cámara siga a un cuerpo más grande con el mismo encuadre
+  // (si el .glb trae sus propios empties, éstos no se usan: vienen ya a la
+  // escala del modelo).
+  const factorAltura = ALTURA_OBJETIVO_U / ALTURA_OBJETIVO_BASE;
+  let offsetPrimeraPersona = new BABYLON.Vector3(0, 5.35 * factorAltura, 0.15 * factorAltura);
+  let offsetTerceraPersona = new BABYLON.Vector3(0, 5.78 * factorAltura, -8.62 * factorAltura);
 
   if (vacioPrimera) {
     vacioPrimera.computeWorldMatrix?.(true);
@@ -384,6 +411,7 @@ export async function cargarPersonaje(
 
   return {
     raiz,
+    clave,
     rotacionBaseRaiz,
     offsetPrimeraPersona,
     offsetTerceraPersona,

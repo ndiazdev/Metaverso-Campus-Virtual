@@ -66,9 +66,18 @@ export interface BarraUsuario {
 // ---------------------------------------------------------------------------
 
 // HTML, no texto: los iconos son <i class="fa-solid ..."> de Font Awesome.
+// Orden pensado a mano (petición del usuario: los grupos, cambiados de lado):
+// a la IZQUIERDA los controles de comunicación (micrófono, volumen y cámara
+// web) y a la DERECHA lo del mundo (silla, mano, emotes, vista), con un
+// separador en medio.
 const BOTONES: Array<{ accion: AccionBarra; icono: string; titulo: string }> = [
   { accion: "microfono", icono: '<i class="fa-solid fa-microphone"></i>', titulo: "Micrófono" },
   { accion: "audio", icono: '<i class="fa-solid fa-volume"></i>', titulo: "Silenciar el sonido" },
+  {
+    accion: "webcam",
+    icono: '<i class="fa-solid fa-video"></i>',
+    titulo: "Cámara web",
+  },
   {
     accion: "sentarse",
     icono: '<i class="fa-solid fa-chair"></i>',
@@ -80,11 +89,6 @@ const BOTONES: Array<{ accion: AccionBarra; icono: string; titulo: string }> = [
     accion: "camara",
     icono: '<i class="fa-solid fa-eye"></i>',
     titulo: "Cámara 1ª / 3ª persona (B)",
-  },
-  {
-    accion: "webcam",
-    icono: '<i class="fa-solid fa-video"></i>',
-    titulo: "Cámara web",
   },
 ];
 
@@ -141,6 +145,8 @@ export function crearBarraUsuario(opciones: OpcionesBarraUsuario): BarraUsuario 
   const emotes = document.createElement("div");
   emotes.className = "bv-emotes";
 
+  // El separador divide los dos grupos: comunicación a la izquierda, mundo
+  // a la derecha (se coloca antes de "sentarse").
   const separadores = new Set<AccionBarra>(["sentarse"]);
 
   for (const definicion of BOTONES) {

@@ -13,6 +13,12 @@ export interface DashboardAdminOpciones {
   contenido: HTMLDivElement;
   overlay: HTMLDivElement;
   alEntrarAClase: (clase: Clase) => void;
+  /**
+   * Pestaña a mostrar al montar (usuarios/clases/inscripciones). Sirve
+   * para que al refrescar tras un CRUD no se vuelva siempre a la de
+   * usuarios.
+   */
+  pestana?: "usuarios" | "clases" | "inscripciones";
 }
 
 interface ClaseAdmin {
@@ -24,6 +30,8 @@ interface ClaseAdmin {
 }
 
 interface InscripcionAdmin {
+  id: number;
+  correoEstudiante: string;
   nombreEstudiante: string;
   materia: string;
   codigo: string;
@@ -535,7 +543,7 @@ export async function mostrarDashboardAdmin(
 export async function mostrarUsuariosAdmin(
   opciones: DashboardAdminOpciones,
 ): Promise<void> {
-  const { contenido } = opciones;
+  const { contenido, cuenta } = opciones;
 
   contenido.innerHTML = `
     <div class="dash-cargando">
@@ -706,7 +714,18 @@ export async function mostrarUsuariosAdmin(
                   ${errorUsuarios}
                 </p>
               `
-              : ""
+              : `
+                <div class="dash-lista-acciones">
+                  <button
+                    type="button"
+                    class="dash-boton-principal"
+                    id="botonCrearUsuario"
+                  >
+                    <i class="fa-solid fa-user-plus"></i>
+                    ${t("admin.crearUsuario")}
+                  </button>
+                </div>
+              `
           }
 
           <div class="dash-lista" id="listaUsuarios">
@@ -811,6 +830,36 @@ export async function mostrarUsuariosAdmin(
                           }
                           </div>
 
+                          <div class="dash-usuario-acciones">
+
+                            <button
+                              type="button"
+                              class="dash-boton-icono"
+                              data-editar="${encodeURIComponent(u.correo)}"
+                              title="${t("admin.editar")}"
+                              aria-label="${t("admin.editar")} ${u.nombreCompleto}"
+                            >
+                              <i class="fa-solid fa-pen" aria-hidden="true"></i>
+                            </button>
+
+                            ${
+                              u.correo !== cuenta.correo
+                                ? `
+                                  <button
+                                    type="button"
+                                    class="dash-boton-icono peligro"
+                                    data-eliminar="${encodeURIComponent(u.correo)}"
+                                    title="${t("admin.eliminar")}"
+                                    aria-label="${t("admin.eliminar")} ${u.nombreCompleto}"
+                                  >
+                                    <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                                  </button>
+                                `
+                                : ""
+                            }
+
+                          </div>
+
                         </div>
                       `,
                     )
@@ -831,7 +880,18 @@ export async function mostrarUsuariosAdmin(
                   ${errorClases}
                 </p>
               `
-              : ""
+              : `
+                <div class="dash-lista-acciones">
+                  <button
+                    type="button"
+                    class="dash-boton-principal"
+                    id="botonCrearClase"
+                  >
+                    <i class="fa-solid fa-plus"></i>
+                    ${t("admin.crearClase")}
+                  </button>
+                </div>
+              `
           }
 
           ${
@@ -872,6 +932,10 @@ export async function mostrarUsuariosAdmin(
                           ${t("admin.colInscritos")}
                         </th>
 
+                        <th class="centro">
+                          ${t("admin.colAcciones")}
+                        </th>
+
                       </tr>
 
                     </thead>
@@ -899,6 +963,34 @@ export async function mostrarUsuariosAdmin(
                                 ${clase.totalInscritos}
                               </td>
 
+                              <td class="centro">
+
+                                <div class="dash-tabla-acciones">
+
+                                  <button
+                                    type="button"
+                                    class="dash-boton-icono"
+                                    data-editar-clase="${encodeURIComponent(clase.codigo)}"
+                                    title="${t("admin.editar")}"
+                                    aria-label="${t("admin.editar")} ${clase.materia}"
+                                  >
+                                    <i class="fa-solid fa-pen" aria-hidden="true"></i>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    class="dash-boton-icono peligro"
+                                    data-eliminar-clase="${encodeURIComponent(clase.codigo)}"
+                                    title="${t("admin.eliminar")}"
+                                    aria-label="${t("admin.eliminar")} ${clase.materia}"
+                                  >
+                                    <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                                  </button>
+
+                                </div>
+
+                              </td>
+
                             </tr>
                           `,
                         )
@@ -924,7 +1016,18 @@ export async function mostrarUsuariosAdmin(
                   ${errorInscripciones}
                 </p>
               `
-              : ""
+              : `
+                <div class="dash-lista-acciones">
+                  <button
+                    type="button"
+                    class="dash-boton-principal"
+                    id="botonCrearInscripcion"
+                  >
+                    <i class="fa-solid fa-user-plus"></i>
+                    ${t("admin.inscribirEstudiante")}
+                  </button>
+                </div>
+              `
           }
 
           ${
@@ -965,6 +1068,10 @@ export async function mostrarUsuariosAdmin(
                           ${t("admin.fecha")}
                         </th>
 
+                        <th class="centro">
+                          ${t("admin.colAcciones")}
+                        </th>
+
                       </tr>
 
                     </thead>
@@ -990,6 +1097,34 @@ export async function mostrarUsuariosAdmin(
 
                               <td class="tenue">
                                 ${inscripcion.fecha}
+                              </td>
+
+                              <td class="centro">
+
+                                <div class="dash-tabla-acciones">
+
+                                  <button
+                                    type="button"
+                                    class="dash-boton-icono"
+                                    data-editar-inscripcion="${inscripcion.id}"
+                                    title="${t("admin.editar")}"
+                                    aria-label="${t("admin.editar")} ${inscripcion.nombreEstudiante}"
+                                  >
+                                    <i class="fa-solid fa-pen" aria-hidden="true"></i>
+                                  </button>
+
+                                  <button
+                                    type="button"
+                                    class="dash-boton-icono peligro"
+                                    data-eliminar-inscripcion="${inscripcion.id}"
+                                    title="${t("admin.eliminar")}"
+                                    aria-label="${t("admin.eliminar")} ${inscripcion.nombreEstudiante}"
+                                  >
+                                    <i class="fa-solid fa-trash" aria-hidden="true"></i>
+                                  </button>
+
+                                </div>
+
                               </td>
 
                             </tr>
@@ -1085,6 +1220,15 @@ export async function mostrarUsuariosAdmin(
     });
   });
 
+  // Pestaña inicial distinta de "usuarios" (tras un CRUD de clases o
+  // inscripciones se vuelve a abrir en la misma donde estabas).
+  const pestanaSolicitada = opciones.pestana;
+  if (pestanaSolicitada && pestanaSolicitada !== "usuarios") {
+    pestanas
+      .find((pestana) => pestana.dataset.vista === pestanaSolicitada)
+      ?.click();
+  }
+
   contenido
     .querySelectorAll<HTMLSelectElement>(
       ".dash-select-rol",
@@ -1149,5 +1293,1244 @@ export async function mostrarUsuariosAdmin(
           }
         },
       );
+    });
+
+  // ==========================================================
+  // CRUD DE USUARIOS: crear / editar / eliminar
+  // ==========================================================
+
+  type UsuarioFila = Cuenta & { id: number };
+
+  const escaparAtributo = (texto: string): string =>
+    texto
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+
+  function pestanaActual(): "usuarios" | "clases" | "inscripciones" {
+    const activa = contenido.querySelector<HTMLButtonElement>(".dash-pestana.activo");
+    const vista = activa?.dataset.vista;
+    return vista === "clases" || vista === "inscripciones" ? vista : "usuarios";
+  }
+
+  function refrescarUsuarios(): void {
+    void mostrarUsuariosAdmin({ ...opciones, pestana: pestanaActual() });
+  }
+
+  function cerrarConEsc(cerrar: () => void): () => void {
+    function alTecla(evento: KeyboardEvent): void {
+      if (evento.key === "Escape") {
+        evento.stopPropagation();
+        cerrar();
+      }
+    }
+
+    window.addEventListener("keydown", alTecla, true);
+
+    return () => window.removeEventListener("keydown", alTecla, true);
+  }
+
+  function abrirModalUsuario(usuario: UsuarioFila | null): void {
+    const esEdicion = usuario !== null;
+
+    const modal = document.createElement("div");
+    modal.className = "dash-modal-fondo";
+
+    const opcionesRol: Array<{ valor: string; etiqueta: string }> = [
+      { valor: "estudiante", etiqueta: etiquetaRol("estudiante") },
+      { valor: "docente", etiqueta: etiquetaRol("docente") },
+      { valor: "admin", etiqueta: etiquetaRol("admin") },
+    ];
+
+    const rolInicial = usuario?.rol && ["estudiante", "docente", "admin"].includes(usuario.rol) ? usuario.rol : "estudiante";
+
+    modal.innerHTML = `
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalUsuario"
+      >
+
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalUsuario">
+          ${esEdicion ? t("admin.editarUsuarioTitulo") : t("admin.crearUsuarioTitulo")}
+        </h3>
+
+        <p>
+          ${esEdicion ? t("admin.editarUsuarioTexto") : t("admin.crearUsuarioTexto")}
+        </p>
+
+        <label class="dash-modal-etiqueta" for="campoNombreUsuario">
+          ${t("admin.campoNombre")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoNombreUsuario"
+          value="${esEdicion ? escaparAtributo(usuario.nombreCompleto) : ""}"
+        />
+
+        <label class="dash-modal-etiqueta" for="campoCorreoUsuario">
+          ${t("admin.campoCorreo")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoCorreoUsuario"
+          type="email"
+          ${esEdicion ? `value="${escaparAtributo(usuario.correo)}" disabled` : ""}
+        />
+
+        <label class="dash-modal-etiqueta" for="campoRolUsuario">
+          ${t("perfil.rol")}
+        </label>
+
+        <select class="dash-select-rol" id="campoRolUsuario">
+          ${opcionesRol
+            .map(
+              (opcion) => `
+                <option value="${opcion.valor}" ${opcion.valor === rolInicial ? "selected" : ""}>
+                  ${opcion.etiqueta}
+                </option>
+              `,
+            )
+            .join("")}
+        </select>
+
+        <label class="dash-modal-etiqueta" for="campoCarreraUsuario">
+          ${t("admin.campoCarrera")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoCarreraUsuario"
+          value="${esEdicion ? escaparAtributo(usuario.carrera ?? "") : ""}"
+          ${rolInicial !== "estudiante" ? "hidden" : ""}
+        />
+
+        <label class="dash-modal-etiqueta" for="campoMateriaUsuario" ${rolInicial !== "docente" ? "hidden" : ""}>
+          ${t("perfil.materia")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoMateriaUsuario"
+          value="${esEdicion ? escaparAtributo(usuario.materia ?? "") : ""}"
+          ${rolInicial !== "docente" ? "hidden" : ""}
+        />
+
+        <label class="dash-modal-etiqueta" for="campoContrasenaUsuario">
+          ${esEdicion ? t("admin.campoContrasenaOpcional") : t("admin.campoContrasena")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoContrasenaUsuario"
+          type="password"
+          autocomplete="${esEdicion ? "new-password" : "new-password"}"
+        />
+
+        <p
+          class="dash-error"
+          id="errorModalUsuario"
+        ></p>
+
+        <button
+          class="dash-boton-principal"
+          id="botonConfirmarUsuario"
+        >
+          ${t("admin.guardarUsuario")}
+        </button>
+
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("comun.cancelar")}
+        </button>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function cerrar(): void {
+      quitarTecla();
+      modal.remove();
+    }
+
+    const quitarTecla = cerrarConEsc(cerrar);
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
+
+    const campoNombre =
+      modal.querySelector<HTMLInputElement>("#campoNombreUsuario")!;
+    const campoCorreo =
+      modal.querySelector<HTMLInputElement>("#campoCorreoUsuario")!;
+    const campoRol =
+      modal.querySelector<HTMLSelectElement>("#campoRolUsuario")!;
+    const campoCarrera =
+      modal.querySelector<HTMLInputElement>("#campoCarreraUsuario")!;
+    const campoMateria =
+      modal.querySelector<HTMLInputElement>("#campoMateriaUsuario")!;
+    const etiquetaMateria = modal.querySelector<HTMLLabelElement>(
+      'label[for="campoMateriaUsuario"]',
+    )!;
+    const campoContrasena =
+      modal.querySelector<HTMLInputElement>("#campoContrasenaUsuario")!;
+    const errorModal =
+      modal.querySelector<HTMLParagraphElement>("#errorModalUsuario")!;
+    const botonConfirmar =
+      modal.querySelector<HTMLButtonElement>("#botonConfirmarUsuario")!;
+
+    function sincronizarRol(): void {
+      const rol = campoRol.value;
+      campoCarrera.hidden = rol !== "estudiante";
+      campoMateria.hidden = rol !== "docente";
+      etiquetaMateria.hidden = rol !== "docente";
+    }
+
+    campoRol.addEventListener("change", sincronizarRol);
+    sincronizarRol();
+
+    botonConfirmar.addEventListener("click", async () => {
+      const nombre = campoNombre.value.trim();
+      const correo = campoCorreo.value.trim().toLowerCase();
+      const rol = campoRol.value;
+      const contrasena = campoContrasena.value;
+
+      errorModal.textContent = "";
+
+      if (nombre.length < 3) {
+        errorModal.textContent = t("admin.errorNombre");
+        return;
+      }
+
+      if (!esEdicion && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+        errorModal.textContent = t("admin.errorCorreo");
+        return;
+      }
+
+      if (!esEdicion && contrasena.length < 6) {
+        errorModal.textContent = t("admin.errorContrasena");
+        return;
+      }
+
+      if (esEdicion && contrasena.length > 0 && contrasena.length < 6) {
+        errorModal.textContent = t("admin.errorContrasena");
+        return;
+      }
+
+      if (rol === "estudiante" && !campoCarrera.value.trim()) {
+        errorModal.textContent = t("admin.errorCarrera");
+        return;
+      }
+
+      if (rol === "docente" && !campoMateria.value.trim()) {
+        errorModal.textContent = t("admin.errorMateriaDocente");
+        return;
+      }
+
+      const cuerpo: Record<string, string> = {
+        nombreCompleto: nombre,
+        rol,
+      };
+
+      if (rol === "estudiante") {
+        cuerpo.carrera = campoCarrera.value.trim();
+        cuerpo.materia = "";
+      } else if (rol === "docente") {
+        cuerpo.materia = campoMateria.value.trim();
+        cuerpo.carrera = "";
+      }
+
+      if (!esEdicion) {
+        cuerpo.correo = correo;
+        cuerpo.contrasena = contrasena;
+      } else if (contrasena.length > 0) {
+        cuerpo.contrasena = contrasena;
+      }
+
+      botonConfirmar.disabled = true;
+      botonConfirmar.textContent = t("admin.guardando");
+
+      try {
+        const res = await fetch(
+          esEdicion
+            ? `${API_URL}/usuarios/${encodeURIComponent(usuario.correo)}`
+            : `${API_URL}/usuarios`,
+          {
+            method: esEdicion ? "PUT" : "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(cuerpo),
+          },
+        );
+
+        if (!res.ok) {
+          let mensaje = esEdicion
+            ? t("admin.errorActualizarUsuario")
+            : t("admin.errorCrearUsuario");
+
+          try {
+            const data = await res.json();
+
+            if (data.error) {
+              mensaje = data.error;
+            }
+          } catch {
+            // Respuesta no JSON
+          }
+
+          errorModal.textContent = mensaje;
+
+          botonConfirmar.disabled = false;
+          botonConfirmar.textContent = t("admin.guardarUsuario");
+
+          return;
+        }
+
+        cerrar();
+        refrescarUsuarios();
+      } catch (error) {
+        console.error(
+          esEdicion ? "Error al editar usuario:" : "Error al crear usuario:",
+          error,
+        );
+
+        errorModal.textContent = t("perfil.msg.sinServidor");
+
+        botonConfirmar.disabled = false;
+        botonConfirmar.textContent = t("admin.guardarUsuario");
+      }
+    });
+
+    campoNombre.focus();
+  }
+
+  function abrirConfirmarEliminar(usuario: UsuarioFila): void {
+    const modal = document.createElement("div");
+    modal.className = "dash-modal-fondo";
+
+    modal.innerHTML = `
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalEliminar"
+      >
+
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalEliminar">
+          ${t("admin.confirmarEliminarTitulo")}
+        </h3>
+
+        <p>
+          ${t("admin.confirmarEliminar", { nombre: usuario.nombreCompleto })}
+        </p>
+
+        <p
+          class="dash-error"
+          id="errorModalEliminar"
+        ></p>
+
+        <button
+          class="dash-boton-peligro-solido"
+          id="botonConfirmarEliminar"
+        >
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          ${t("admin.eliminar")}
+        </button>
+
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("admin.no")}
+        </button>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function cerrar(): void {
+      quitarTecla();
+      modal.remove();
+    }
+
+    const quitarTecla = cerrarConEsc(cerrar);
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
+
+    const errorModal =
+      modal.querySelector<HTMLParagraphElement>("#errorModalEliminar")!;
+    const botonConfirmar =
+      modal.querySelector<HTMLButtonElement>("#botonConfirmarEliminar")!;
+
+    botonConfirmar.addEventListener("click", async () => {
+      botonConfirmar.disabled = true;
+      botonConfirmar.textContent = t("admin.guardando");
+
+      try {
+        const res = await fetch(
+          `${API_URL}/usuarios/${encodeURIComponent(usuario.correo)}`,
+          {
+            method: "DELETE",
+          },
+        );
+
+        if (!res.ok) {
+          let mensaje = t("admin.errorEliminarUsuario");
+
+          try {
+            const data = await res.json();
+
+            if (data.error) {
+              mensaje = data.error;
+            }
+          } catch {
+            // Respuesta no JSON
+          }
+
+          errorModal.textContent = mensaje;
+
+          botonConfirmar.disabled = false;
+          botonConfirmar.innerHTML = `
+            <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            ${t("admin.eliminar")}
+          `;
+
+          return;
+        }
+
+        cerrar();
+        refrescarUsuarios();
+      } catch (error) {
+        console.error("Error al eliminar usuario:", error);
+
+        errorModal.textContent = t("perfil.msg.sinServidor");
+
+        botonConfirmar.disabled = false;
+        botonConfirmar.innerHTML = `
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          ${t("admin.eliminar")}
+        `;
+      }
+    });
+  }
+
+  const botonCrearUsuario =
+    contenido.querySelector<HTMLButtonElement>("#botonCrearUsuario");
+
+  if (botonCrearUsuario) {
+    botonCrearUsuario.addEventListener("click", () => abrirModalUsuario(null));
+  }
+
+  contenido.querySelectorAll<HTMLButtonElement>("[data-editar]").forEach((boton) => {
+    boton.addEventListener("click", () => {
+      const correo = decodeURIComponent(boton.dataset.editar ?? "");
+      const usuario = usuarios.find((u) => u.correo === correo);
+
+      if (usuario) {
+        abrirModalUsuario(usuario as UsuarioFila);
+      }
+    });
+  });
+
+  contenido.querySelectorAll<HTMLButtonElement>("[data-eliminar]").forEach((boton) => {
+    boton.addEventListener("click", () => {
+      const correo = decodeURIComponent(boton.dataset.eliminar ?? "");
+      const usuario = usuarios.find((u) => u.correo === correo);
+
+      if (usuario) {
+        abrirConfirmarEliminar(usuario as UsuarioFila);
+      }
+    });
+  });
+
+  // ==========================================================
+  // CRUD DE CLASES: crear / editar / eliminar
+  // ==========================================================
+
+  // Quien puede ser docente de una clase: docentes y administración.
+  const candidatosDocente = usuarios.filter(
+    (u) => u.rol === "docente" || u.rol === "admin",
+  );
+
+  function opcionesDocente(sel: string): string {
+    if (candidatosDocente.length === 0) {
+      return `<option value="" disabled selected>${t("admin.sinDocentes")}</option>`;
+    }
+    return candidatosDocente
+      .map(
+        (d) => `
+          <option value="${escaparAtributo(d.correo)}" ${d.correo === sel ? "selected" : ""}>
+            ${escaparAtributo(d.nombreCompleto)} (${escaparAtributo(d.correo)})
+          </option>
+        `,
+      )
+      .join("");
+  }
+
+  function abrirModalClase(clase: ClaseAdmin | null): void {
+    const esEdicion = clase !== null;
+
+    const modal = document.createElement("div");
+    modal.className = "dash-modal-fondo";
+
+    modal.innerHTML = `
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalClaseAdmin"
+      >
+
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalClaseAdmin">
+          ${esEdicion ? t("admin.editarClaseTitulo") : t("admin.crearClase")}
+        </h3>
+
+        <p>
+          ${esEdicion ? t("admin.editarClaseTexto") : t("admin.crearTexto")}
+        </p>
+
+        <label class="dash-modal-etiqueta" for="campoMateriaClaseAdmin">
+          ${t("perfil.materia")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoMateriaClaseAdmin"
+          value="${esEdicion ? escaparAtributo(clase.materia) : ""}"
+        />
+
+        <label class="dash-modal-etiqueta" for="campoCodigoClaseAdmin">
+          ${t("admin.campoCodigo")}
+        </label>
+
+        <input
+          class="dash-input-codigo dash-input-texto"
+          id="campoCodigoClaseAdmin"
+          value="${esEdicion ? escaparAtributo(clase.codigo) : ""}"
+          ${esEdicion ? "disabled" : ""}
+        />
+
+        <label class="dash-modal-etiqueta" for="campoDocenteClaseAdmin">
+          ${t("admin.campoDocente")}
+        </label>
+
+        <select class="dash-select-rol" id="campoDocenteClaseAdmin">
+          ${opcionesDocente(esEdicion ? clase.correoDocente : candidatosDocente[0]?.correo ?? "")}
+        </select>
+
+        <p
+          class="dash-error"
+          id="errorModalClaseAdmin"
+        ></p>
+
+        <button
+          class="dash-boton-principal"
+          id="botonConfirmarClaseAdmin"
+        >
+          ${t("admin.guardarUsuario")}
+        </button>
+
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("comun.cancelar")}
+        </button>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function cerrar(): void {
+      quitarTecla();
+      modal.remove();
+    }
+
+    const quitarTecla = cerrarConEsc(cerrar);
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
+
+    const campoMateria =
+      modal.querySelector<HTMLInputElement>("#campoMateriaClaseAdmin")!;
+    const campoCodigo =
+      modal.querySelector<HTMLInputElement>("#campoCodigoClaseAdmin")!;
+    const campoDocente =
+      modal.querySelector<HTMLSelectElement>("#campoDocenteClaseAdmin")!;
+    const errorModal =
+      modal.querySelector<HTMLParagraphElement>("#errorModalClaseAdmin")!;
+    const botonConfirmar =
+      modal.querySelector<HTMLButtonElement>("#botonConfirmarClaseAdmin")!;
+
+    botonConfirmar.addEventListener("click", async () => {
+      const materia = campoMateria.value.trim();
+      const codigo = campoCodigo.value.trim().toUpperCase();
+      const correoDocente = campoDocente.value;
+
+      errorModal.textContent = "";
+
+      if (materia.length < 3) {
+        errorModal.textContent = t("admin.errorMateria");
+        return;
+      }
+
+      if (!esEdicion) {
+        if (codigo && !/^[A-Z0-9-]{2,20}$/.test(codigo)) {
+          errorModal.textContent = t("admin.errorCodigo");
+          return;
+        }
+      }
+
+      if (!correoDocente) {
+        errorModal.textContent = t("admin.errorDocente");
+        return;
+      }
+
+      const docente = candidatosDocente.find((d) => d.correo === correoDocente);
+      if (!docente) {
+        errorModal.textContent = t("admin.errorDocente");
+        return;
+      }
+
+      botonConfirmar.disabled = true;
+      botonConfirmar.textContent = t("admin.guardando");
+
+      try {
+        const res = await fetch(
+          esEdicion
+            ? `${API_URL}/clases/${encodeURIComponent(clase.codigo)}`
+            : `${API_URL}/clases`,
+          {
+            method: esEdicion ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...(esEdicion ? {} : { codigo: codigo || generarCodigo(materia) }),
+              materia,
+              correoDocente: docente.correo,
+              nombreDocente: docente.nombreCompleto,
+            }),
+          },
+        );
+
+        if (!res.ok) {
+          let mensaje = esEdicion
+            ? t("admin.errorActualizarClase")
+            : t("admin.errorCrearClase");
+
+          try {
+            const data = await res.json();
+            if (data.error) mensaje = data.error;
+          } catch {
+            // Respuesta no JSON
+          }
+
+          errorModal.textContent = mensaje;
+
+          botonConfirmar.disabled = false;
+          botonConfirmar.textContent = t("admin.guardarUsuario");
+
+          return;
+        }
+
+        cerrar();
+        refrescarUsuarios();
+      } catch (error) {
+        console.error(
+          esEdicion ? "Error al editar clase:" : "Error al crear clase:",
+          error,
+        );
+
+        errorModal.textContent = t("perfil.msg.sinServidor");
+
+        botonConfirmar.disabled = false;
+        botonConfirmar.textContent = t("admin.guardarUsuario");
+      }
+    });
+
+    campoMateria.focus();
+  }
+
+  function generarCodigo(materia: string): string {
+    const prefijo = materia.substring(0, 3).toUpperCase();
+    const numAzar = Math.floor(100 + Math.random() * 900);
+    return `${prefijo}-${numAzar}`;
+  }
+
+  function abrirConfirmarEliminarClase(clase: ClaseAdmin): void {
+    const modal = document.createElement("div");
+    modal.className = "dash-modal-fondo";
+
+    modal.innerHTML = `
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalEliminarClase"
+      >
+
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalEliminarClase">
+          ${t("admin.confirmarEliminarClaseTitulo")}
+        </h3>
+
+        <p>
+          ${t("admin.confirmarEliminarClase", { nombre: `${clase.materia} (${clase.codigo})` })}
+        </p>
+
+        <p
+          class="dash-error"
+          id="errorModalEliminarClase"
+        ></p>
+
+        <button
+          class="dash-boton-peligro-solido"
+          id="botonConfirmarEliminarClase"
+        >
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          ${t("admin.eliminar")}
+        </button>
+
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("admin.no")}
+        </button>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function cerrar(): void {
+      quitarTecla();
+      modal.remove();
+    }
+
+    const quitarTecla = cerrarConEsc(cerrar);
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
+
+    const errorModal =
+      modal.querySelector<HTMLParagraphElement>("#errorModalEliminarClase")!;
+    const botonConfirmar =
+      modal.querySelector<HTMLButtonElement>("#botonConfirmarEliminarClase")!;
+
+    botonConfirmar.addEventListener("click", async () => {
+      botonConfirmar.disabled = true;
+      botonConfirmar.textContent = t("admin.guardando");
+
+      try {
+        const res = await fetch(
+          `${API_URL}/clases/${encodeURIComponent(clase.codigo)}`,
+          { method: "DELETE" },
+        );
+
+        if (!res.ok) {
+          let mensaje = t("admin.errorEliminarClase");
+
+          try {
+            const data = await res.json();
+            if (data.error) mensaje = data.error;
+          } catch {
+            // Respuesta no JSON
+          }
+
+          errorModal.textContent = mensaje;
+
+          botonConfirmar.disabled = false;
+          botonConfirmar.innerHTML = `
+            <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            ${t("admin.eliminar")}
+          `;
+
+          return;
+        }
+
+        cerrar();
+        refrescarUsuarios();
+      } catch (error) {
+        console.error("Error al eliminar clase:", error);
+
+        errorModal.textContent = t("perfil.msg.sinServidor");
+
+        botonConfirmar.disabled = false;
+        botonConfirmar.innerHTML = `
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          ${t("admin.eliminar")}
+        `;
+      }
+    });
+  }
+
+  // ==========================================================
+  // CRUD DE INSCRIPCIONES: crear / editar / eliminar
+  // ==========================================================
+
+  const candidatosEstudiante = usuarios.filter(
+    (u) => u.rol === "estudiante" || u.rol === "invitado",
+  );
+
+  function opcionesEstudiante(sel: string): string {
+    if (candidatosEstudiante.length === 0) {
+      return `<option value="" disabled selected>${t("admin.sinEstudiantes")}</option>`;
+    }
+    return candidatosEstudiante
+      .map(
+        (e) => `
+          <option value="${escaparAtributo(e.correo)}" ${e.correo === sel ? "selected" : ""}>
+            ${escaparAtributo(e.nombreCompleto)} (${escaparAtributo(e.correo)})
+          </option>
+        `,
+      )
+      .join("");
+  }
+
+  function opcionesClase(sel: string): string {
+    if (clases.length === 0) {
+      return `<option value="" disabled selected>${t("admin.sinClasesOpciones")}</option>`;
+    }
+    return clases
+      .map(
+        (c) => `
+          <option value="${escaparAtributo(c.codigo)}" ${c.codigo === sel ? "selected" : ""}>
+            ${escaparAtributo(c.materia)} (${escaparAtributo(c.codigo)})
+          </option>
+        `,
+      )
+      .join("");
+  }
+
+  function abrirModalInscripcion(inscripcion: InscripcionAdmin | null): void {
+    const esEdicion = inscripcion !== null;
+
+    const modal = document.createElement("div");
+    modal.className = "dash-modal-fondo";
+
+    modal.innerHTML = `
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalInscripcionAdmin"
+      >
+
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalInscripcionAdmin">
+          ${esEdicion ? t("admin.editarInscripcionTitulo") : t("admin.inscribirTitulo")}
+        </h3>
+
+        <p>
+          ${esEdicion ? t("admin.editarInscripcionTexto") : t("admin.inscribirTexto")}
+        </p>
+
+        ${
+          esEdicion
+            ? `
+              <label class="dash-modal-etiqueta" for="campoEstudianteInscripcion">
+                ${t("admin.campoEstudiante")}
+              </label>
+
+              <input
+                class="dash-input-codigo dash-input-texto"
+                id="campoEstudianteInscripcion"
+                value="${escaparAtributo(inscripcion.nombreEstudiante)} (${escaparAtributo(inscripcion.correoEstudiante)})"
+                disabled
+              />
+            `
+            : `
+              <label class="dash-modal-etiqueta" for="campoEstudianteInscripcion">
+                ${t("admin.campoEstudiante")}
+              </label>
+
+              <select class="dash-select-rol" id="campoEstudianteInscripcion">
+                ${opcionesEstudiante("")}
+              </select>
+            `
+        }
+
+        <label class="dash-modal-etiqueta" for="campoClaseInscripcion">
+          ${t("admin.campoClase")}
+        </label>
+
+        <select class="dash-select-rol" id="campoClaseInscripcion">
+          ${opcionesClase(esEdicion ? inscripcion.codigo : "")}
+        </select>
+
+        <p
+          class="dash-error"
+          id="errorModalInscripcionAdmin"
+        ></p>
+
+        <button
+          class="dash-boton-principal"
+          id="botonConfirmarInscripcionAdmin"
+        >
+          ${t("admin.guardarUsuario")}
+        </button>
+
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("comun.cancelar")}
+        </button>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function cerrar(): void {
+      quitarTecla();
+      modal.remove();
+    }
+
+    const quitarTecla = cerrarConEsc(cerrar);
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
+
+    const campoEstudiante =
+      modal.querySelector<HTMLSelectElement>("#campoEstudianteInscripcion")!;
+    const campoClase =
+      modal.querySelector<HTMLSelectElement>("#campoClaseInscripcion")!;
+    const errorModal =
+      modal.querySelector<HTMLParagraphElement>("#errorModalInscripcionAdmin")!;
+    const botonConfirmar =
+      modal.querySelector<HTMLButtonElement>("#botonConfirmarInscripcionAdmin")!;
+
+    botonConfirmar.addEventListener("click", async () => {
+      const codigoClase = campoClase.value;
+
+      errorModal.textContent = "";
+
+      if (!codigoClase) {
+        errorModal.textContent = t("admin.errorClaseSel");
+        return;
+      }
+
+      if (!esEdicion && !campoEstudiante.value) {
+        errorModal.textContent = t("admin.errorEstudiante");
+        return;
+      }
+
+      botonConfirmar.disabled = true;
+      botonConfirmar.textContent = t("admin.guardando");
+
+      try {
+        const res = await fetch(
+          esEdicion
+            ? `${API_URL}/inscripciones/${inscripcion.id}`
+            : `${API_URL}/inscripciones`,
+          {
+            method: esEdicion ? "PUT" : "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ...(esEdicion
+                ? { codigoClase }
+                : { correoEstudiante: campoEstudiante.value, codigoClase }),
+            }),
+          },
+        );
+
+        if (!res.ok) {
+          let mensaje = esEdicion
+            ? t("admin.errorActualizarInscripcion")
+            : t("admin.errorCrearInscripcion");
+
+          try {
+            const data = await res.json();
+            if (data.error) mensaje = data.error;
+          } catch {
+            // Respuesta no JSON
+          }
+
+          errorModal.textContent = mensaje;
+
+          botonConfirmar.disabled = false;
+          botonConfirmar.textContent = t("admin.guardarUsuario");
+
+          return;
+        }
+
+        cerrar();
+        refrescarUsuarios();
+      } catch (error) {
+        console.error(
+          esEdicion ? "Error al editar inscripción:" : "Error al inscribir:",
+          error,
+        );
+
+        errorModal.textContent = t("perfil.msg.sinServidor");
+
+        botonConfirmar.disabled = false;
+        botonConfirmar.textContent = t("admin.guardarUsuario");
+      }
+    });
+  }
+
+  function abrirConfirmarEliminarInscripcion(inscripcion: InscripcionAdmin): void {
+    const modal = document.createElement("div");
+    modal.className = "dash-modal-fondo";
+
+    modal.innerHTML = `
+      <div
+        class="dash-modal"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="tituloModalEliminarInscripcion"
+      >
+
+        <button
+          type="button"
+          class="dash-modal-cerrar"
+          data-cerrar
+          aria-label="${t("comun.cerrar")}"
+          title="${t("comun.cerrar")}"
+        >
+          <i class="fa-solid fa-xmark" aria-hidden="true"></i>
+        </button>
+
+        <h3 id="tituloModalEliminarInscripcion">
+          ${t("admin.confirmarEliminarInscripcionTitulo")}
+        </h3>
+
+        <p>
+          ${t("admin.confirmarEliminarInscripcion", { nombre: inscripcion.nombreEstudiante })}
+        </p>
+
+        <p
+          class="dash-error"
+          id="errorModalEliminarInscripcion"
+        ></p>
+
+        <button
+          class="dash-boton-peligro-solido"
+          id="botonConfirmarEliminarInscripcion"
+        >
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          ${t("admin.eliminar")}
+        </button>
+
+        <button
+          type="button"
+          class="dash-boton-secundario"
+          data-cerrar
+        >
+          ${t("admin.no")}
+        </button>
+
+      </div>
+    `;
+
+    document.body.appendChild(modal);
+
+    function cerrar(): void {
+      quitarTecla();
+      modal.remove();
+    }
+
+    const quitarTecla = cerrarConEsc(cerrar);
+
+    modal.querySelectorAll<HTMLElement>("[data-cerrar]").forEach((boton) => {
+      boton.addEventListener("click", cerrar);
+    });
+
+    modal.addEventListener("click", (evento) => {
+      if (evento.target === modal) cerrar();
+    });
+
+    const errorModal =
+      modal.querySelector<HTMLParagraphElement>("#errorModalEliminarInscripcion")!;
+    const botonConfirmar =
+      modal.querySelector<HTMLButtonElement>("#botonConfirmarEliminarInscripcion")!;
+
+    botonConfirmar.addEventListener("click", async () => {
+      botonConfirmar.disabled = true;
+      botonConfirmar.textContent = t("admin.guardando");
+
+      try {
+        const res = await fetch(
+          `${API_URL}/inscripciones/${inscripcion.id}`,
+          { method: "DELETE" },
+        );
+
+        if (!res.ok) {
+          let mensaje = t("admin.errorEliminarInscripcion");
+
+          try {
+            const data = await res.json();
+            if (data.error) mensaje = data.error;
+          } catch {
+            // Respuesta no JSON
+          }
+
+          errorModal.textContent = mensaje;
+
+          botonConfirmar.disabled = false;
+          botonConfirmar.innerHTML = `
+            <i class="fa-solid fa-trash" aria-hidden="true"></i>
+            ${t("admin.eliminar")}
+          `;
+
+          return;
+        }
+
+        cerrar();
+        refrescarUsuarios();
+      } catch (error) {
+        console.error("Error al eliminar inscripción:", error);
+
+        errorModal.textContent = t("perfil.msg.sinServidor");
+
+        botonConfirmar.disabled = false;
+        botonConfirmar.innerHTML = `
+          <i class="fa-solid fa-trash" aria-hidden="true"></i>
+          ${t("admin.eliminar")}
+        `;
+      }
+    });
+  }
+
+  // --------------------------------------------------------
+  // CABLEADO de los botones de las dos secciones
+  // --------------------------------------------------------
+
+  contenido
+    .querySelector<HTMLButtonElement>("#botonCrearClase")
+    ?.addEventListener("click", () => abrirModalClase(null));
+
+  contenido
+    .querySelectorAll<HTMLButtonElement>("[data-editar-clase]")
+    .forEach((boton) => {
+      boton.addEventListener("click", () => {
+        const codigo = decodeURIComponent(boton.dataset.editarClase ?? "");
+        const clase = clases.find((c) => c.codigo === codigo);
+        if (clase) abrirModalClase(clase);
+      });
+    });
+
+  contenido
+    .querySelectorAll<HTMLButtonElement>("[data-eliminar-clase]")
+    .forEach((boton) => {
+      boton.addEventListener("click", () => {
+        const codigo = decodeURIComponent(boton.dataset.eliminarClase ?? "");
+        const clase = clases.find((c) => c.codigo === codigo);
+        if (clase) abrirConfirmarEliminarClase(clase);
+      });
+    });
+
+  contenido
+    .querySelector<HTMLButtonElement>("#botonCrearInscripcion")
+    ?.addEventListener("click", () => abrirModalInscripcion(null));
+
+  contenido
+    .querySelectorAll<HTMLButtonElement>("[data-editar-inscripcion]")
+    .forEach((boton) => {
+      boton.addEventListener("click", () => {
+        const id = Number(boton.dataset.editarInscripcion);
+        const inscripcion = inscripciones.find((i) => i.id === id);
+        if (inscripcion) abrirModalInscripcion(inscripcion);
+      });
+    });
+
+  contenido
+    .querySelectorAll<HTMLButtonElement>("[data-eliminar-inscripcion]")
+    .forEach((boton) => {
+      boton.addEventListener("click", () => {
+        const id = Number(boton.dataset.eliminarInscripcion);
+        const inscripcion = inscripciones.find((i) => i.id === id);
+        if (inscripcion) abrirConfirmarEliminarInscripcion(inscripcion);
+      });
     });
 }

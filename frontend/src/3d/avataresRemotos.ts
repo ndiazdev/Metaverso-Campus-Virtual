@@ -9,30 +9,37 @@
 // de red y este archivo se puede probar suelto.
 //
 // ── CÓMO SE CONSIGUE EL CUERPO DE CADA INVITADO ─────────────
-// El .glb del personaje pesa 55 MB, así que NO se descarga uno
-// por persona. Se clona el del jugador local, que ya está en
-// memoria: clonar comparte la geometría en la GPU, así que un
-// aula con 30 personas cuesta lo mismo que una con 2.
-//
-// Hay un detalle que obliga a tocar el clon: la malla viene
-// con esqueleto, y un clon SIN más comparte el esqueleto del
-// original. Si se dejara así, los clones se moverían al mismo
-// ritmo que el jugador local (y en concreto, todos Walking
-// cuando él camina). Por eso a cada clon se le pone un
-// esqueleto PROPIO (`skeleton.clone()`): se dibuja con piel y
-// queda independiente. Está verificado que el original no se
-// ve afectado (ver nota al pie del archivo).
+// Cada persona se dibuja con SU skin (rol+género de su sesión), así
+// que no vale con clonar siempre el cuerpo local: la propia skin se
+// clona del cuerpo local (ya está en memoria) y las ajenas se cargan
+// UNA sola vez por sesión y quedan escondidas bajo el suelo como
+// plantilla (el .glb pesa ~55 MB, así que solo se paga por las skins
+// que de verdad aparezcan en la clase).
 //
 // OJO: la solución fácil `skeleton = null` NO vale en estos
 // .glb: sin esqueleto el cuerpo colapsa a un punto de 0.01 u
 // en el piso (el tamaño lo dan las matrices de los huesos;
 // medido: 0.01 u de crudo frente a 5.63 u con piel).
 //
-// LIMITACIÓN CONOCIDA: el avatar remoto no recibe clips, así
-// que queda en pose estática y camina solo con el balanceo
-// vertical de este módulo; el resto de acciones se leen en la
-// etiqueta (sentado, ✋). Cuando haya un .glb con esqueleto
-// por usuario, esto se sustituye por clips re-apuntados.
+// Y el clon necesita dos toques más, medidos con NullEngine
+// (probarClonEnlace.mjs): `Skeleton.clone()` le copia al clon el
+// enlace hueso→nodo —¡pero apuntando a los nodos del ORIGINAL!— y,
+// como los clips animan nodos, sin desenlazar el remoto ejecutaba
+// al unísono cada movimiento del cuerpo del que se clonó (el bug de
+// "al caminar con uno, el otro se mueve": 65 de 65 huesos enlazados).
+// Por eso a cada esqueleto clonado se le llama
+// `linkTransformNode(null)` y se le pone la pose del clip "parado"
+// (ver liberarEsqueleto): pose de pie propia y cero influencia de
+// nadie más (ver nota al pie del archivo).
+//
+// ── CÓMO SE ANIMA UN AVATAR REMOTO ──────────────────────────
+// Cada cuerpo lleva sus PROPIOS grupos de animación re-apuntados a
+// su esqueleto (crearGruposDeClon): la red solo manda booleanos
+// (sentado, caminando, mano alzada) y aquí se decide el clip con la
+// misma prioridad que el jugador local — sentado → caminar → mano →
+// parado. Así, en dos ventanas a la vez, el que se sienta en una se
+// sienta también en la otra. La cápsula de sustitución no tiene
+// clips y sigue con el balanceo vertical de este módulo.
 //
 // ── POR QUÉ HAY QUE SUAVIZAR ────────────────────────────────
 // El otro envía 12 posiciones por segundo, pero la pantalla se
@@ -46,11 +53,13 @@
 // ============================================================
 
 import * as BABYLON from "babylonjs";
-import type { Personaje } from "./personaje";
+import { normalizarNombre, type AnimacionesPersonaje, type SlotAnimacion } from "./animaciones";
+import { ALTURA_OBJETIVO_BASE, ALTURA_OBJETIVO_U, cargarPersonaje, claveSkin, type Personaje } from "./personaje";
 import {
   crearPresencia,
   type EstadoConexion,
   type EstadoLocal,
+  type MensajeTablero,
   type Participante,
   type Presencia,
 } from "../red/presencia";
@@ -63,7 +72,7 @@ export interface ContextoAvataresRemotos {
   clase: string;
   /** Altura del suelo del mapa: los pies de todos los avatares van aquí. */
   sueloY: number;
-  /** Cuerpo del jugador local: es la plantilla que se clona. */
+  /** Cuerpo del jugador local: hace de plantilla para su propia skin. */
   personaje: () => Personaje | null;
   /** Dónde está y qué hace el jugador local (lo publica a la red). */
   estadoLocal: () => EstadoLocal;
@@ -71,6 +80,8 @@ export interface ContextoAvataresRemotos {
   alCambiarParticipantes: (participantes: Participante[], miId: string | null) => void;
   /** Cambió la conexión con el servidor. */
   alCambiarConexion: (estado: EstadoConexion, detalle?: string) => void;
+  /** Otro de la sala publicó contenido en el tablero del aula. */
+  alRecibirTablero?: (mensaje: MensajeTablero) => void;
   /** El servidor no dejó entrar a esta persona en la clase. */
   alRechazar: (motivo: string) => void;
   /** Alguien acaba de levantar la mano (transición de apagada → encendida). */
@@ -84,20 +95,38 @@ export interface AvataresRemotos {
   participantes: () => Participante[];
   /** Id de esta conexión en el servidor; marca al propio usuario en la lista. */
   miId: () => string | null;
+  /** Manda el contenido del tablero del aula al resto de la sala. */
+  publicarTablero: (mensaje: MensajeTablero) => void;
+  /**
+   * Posición de la CABEZA del avatar remoto (un poco por encima) en unidades
+   * del salón. Sirve para anclar el cuadrito de su webcam en pantalla
+   * (se proyecta con la cámara activa en cada frame). null si ese avatar
+   * aún no existe o no ha publicado posición.
+   */
+  posicionCabeza: (id: string) => BABYLON.Vector3 | null;
+  /** Ancho de la etiqueta del nombre en unidades del salón (para apartar el cuadrito de vídeo). */
+  anchoEtiqueta: () => number;
+  /** Nombre visible de un participante (para la etiqueta del cuadrito de vídeo). */
+  nombreDe: (id: string) => string;
+  /** Señalización WebRTC delegada a la presencia (ver red/presencia.ts). */
+  emitirSignaling: (evento: string, datos: unknown) => void;
+  escucharSignaling: (evento: string, fn: (datos: any) => void) => () => void;
   /** Corta la conexión y borra los avatares ajenos de la escena. */
   destruir: () => void;
 }
 
 // ── Constantes de la escena ──────────────────────────────────
 
-/** Estatura del personaje en unidades del salón (la misma de personaje.ts). */
-const ALTURA_PERSONAJE_U = 5.892;
+// La estatura del personaje la manda personaje.ts y VARÍA según el mapa (en el
+// salón de prueba el cuerpo es más grande), así que aquí no se guarda: se lee
+// ALTURA_OBJETIVO_U en cada uso y todo (etiqueta y avatar de reserva) escala
+// con ella para conservar el tamaño respecto al cuerpo.
 
-/** A qué altura del suelo va la etiqueta con el nombre. */
-const ALTURA_ETIQUETA = ALTURA_PERSONAJE_U + 0.95;
+/** A qué altura del suelo va la etiqueta con el nombre (0.95 u por encima de la cabeza). */
+const alturaEtiqueta = (): number => ALTURA_OBJETIVO_U + 0.95;
 
-/** Ancho del plano de la etiqueta, en unidades del salón. */
-const ANCHO_ETIQUETA = 4.4;
+/** Ancho del plano de la etiqueta, en unidades del salón (4.4 u a estatura base). */
+const anchoEtiqueta = (): number => 4.4 * (ALTURA_OBJETIVO_U / ALTURA_OBJETIVO_BASE);
 
 /** Qué tan rápido un avatar alcanza la posición que le llega. */
 const SUAVIZADO = 14;
@@ -131,6 +160,12 @@ interface AvatarRemoto {
   /** Nombre visible: es el que se da en el aviso de "levantó la mano". */
   nombre: string;
   raiz: BABYLON.TransformNode;
+  /**
+   * Rotación base del `.glb` (`__root__`) del cuerpo con el que se clonó.
+   * Va por avatar porque cada skin puede traerla distinta: antes se leía
+   * siempre la del cuerpo local.
+   */
+  rotacionBase: BABYLON.Quaternion | null;
   etiqueta: BABYLON.Mesh;
   anillo: BABYLON.Mesh;
   /** Posición a la que se está moviendo (la última que llegó por la red). */
@@ -141,6 +176,16 @@ interface AvatarRemoto {
   caminando: boolean;
   manoAlzada: boolean;
   sentado: boolean;
+  /**
+   * Clips re-apuntados al ESQUELETO PROPIO de este avatar (ver
+   * crearGruposDeClon). `Partial`: lo que no esté es que esa skin no
+   * trae ese clip. La cápsula de sustitución se queda con `{}`.
+   */
+  grupos: Partial<AnimacionesPersonaje>;
+  /** El clip que está sonando ahora mismo (para no re-empezarlo con cada estado). */
+  grupoActual: BABYLON.AnimationGroup | null;
+  /** Último estado que mandó la red: manda aunque su cuerpo cargue después. */
+  estadoRed: Participante["estado"];
   /** Fase del balanceo: dos personas no se mueven igual. */
   fase: number;
   /** Pies en el suelo, sin el balanceo. */
@@ -159,16 +204,62 @@ interface AvatarRemoto {
 export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemotos {
   const avatares = new Map<string, AvatarRemoto>();
 
-  // Plantilla para clonar. Puede llegar null al principio (el cuerpo
-  // tarda en cargar) y volverse null otra vez si el .glb falla, así
-  // que se consulta en cada momento en que hace falta.
-  const plantilla = (): Personaje | null => ctx.personaje();
-
   let presencia: Presencia | null = null;
 
-  // Plantilla para clonar. Puede llegar null al principio (el cuerpo
-  // tarda en cargar) y volverse null otra vez si el .glb falla, así
-  // que se consulta en cada momento en que hace falta.
+  // ── CUERPOS POR SKIN (de dónde sale cada clon) ─────────────
+  // Cada persona se dibuja con la skin de SU sesión, así que la plantilla
+  // ya no es siempre el cuerpo local: la propia skin se clona del cuerpo
+  // local y las ajenas se cargan una sola vez por sesión. La promesa se
+  // guarda ANTES de resolver, que es lo que evita que dos personas con la
+  // misma skin disparen dos cargas del mismo .glb a la vez.
+  const plantillas = new Map<string, Promise<Personaje | null>>();
+
+  /**
+   * Cuerpo del que clonar el avatar de ESTA persona.
+   * Una skin ajena se esconde bajo el suelo al cargarla: los clones
+   * comparten su geometría y su transform se pisa al clonar, así que la
+   * plantilla nunca se llega a ver.
+   */
+  async function plantillaPara(participante: Participante): Promise<Personaje | null> {
+    const clave = claveSkin(participante.rol, participante.genero);
+
+    const local = ctx.personaje();
+    if (local && local.clave === clave) return local;
+
+    let pendiente = plantillas.get(clave);
+    if (!pendiente) {
+      pendiente = (async () => {
+        try {
+          const cuerpo = await cargarPersonaje(ctx.escena, participante.rol, participante.genero);
+          cuerpo.raiz.position.y = -1000;
+          cuerpo.raiz.checkCollisions = false;
+          cuerpo.raiz.isPickable = false;
+          return cuerpo;
+        } catch (e) {
+          console.warn(`[avataresRemotos] no hay cuerpo para la skin de ${participante.nombre}:`, e);
+          plantillas.delete(clave); // a ver si el siguiente intento cuela
+          return null;
+        }
+      })();
+      plantillas.set(clave, pendiente);
+    }
+
+    const cargada = await pendiente;
+    // Mientras cargaba pudo aparecer el cuerpo local con esta misma skin
+    // (la carga del jugador local va por su cuenta): mejor usarlo.
+    const ahora = ctx.personaje();
+    return ahora && ahora.clave === clave ? ahora : cargada;
+  }
+
+  // Lista más reciente del servidor: el alta de un avatar es asíncrona (a
+  // veces hay que cargar su skin primero) y así no se dibuja a quien ya
+  // salió de la clase mientras cargaba.
+  let ultimaLista: Participante[] = [];
+
+  // Segunda cerca del alta: `avatares` no contiene a la persona hasta el
+  // final, así que sin este conjunto dos avisos seguidos dibujarían dos
+  // veces lo mismo.
+  const creando = new Set<string>();
 
   // ---------------------------------------------------------------
   // ETIQUETA CON EL NOMBRE
@@ -260,9 +351,10 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
 
     // El plano es más alto que el cajón dibujado para que el texto grande no
     // se recorte; lo que no se pinta queda transparente.
+    const anchoPlano = anchoEtiqueta();
     const plano = BABYLON.MeshBuilder.CreatePlane(
       `cv_etiqueta_plano_${id}`,
-      { width: ANCHO_ETIQUETA, height: (ANCHO_ETIQUETA * ALTO_TEX) / ANCHO_TEX },
+      { width: anchoPlano, height: (anchoPlano * ALTO_TEX) / ANCHO_TEX },
       ctx.escena,
     );
     plano.material = material;
@@ -303,21 +395,22 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
   function crearAvatarSustituto(participante: Participante): BABYLON.TransformNode {
     const raiz = new BABYLON.TransformNode(`cv_remoto_${participante.id}`, ctx.escena);
 
+    const factor = ALTURA_OBJETIVO_U / ALTURA_OBJETIVO_BASE;
     const cuerpo = BABYLON.MeshBuilder.CreateCapsule(
       `cv_remoto_cuerpo_${participante.id}`,
-      { height: ALTURA_PERSONAJE_U * 0.78, radius: 0.85 },
+      { height: ALTURA_OBJETIVO_U * 0.78, radius: 0.85 * factor },
       ctx.escena,
     );
-    cuerpo.position.y = (ALTURA_PERSONAJE_U * 0.78) / 2;
+    cuerpo.position.y = (ALTURA_OBJETIVO_U * 0.78) / 2;
     cuerpo.parent = raiz;
     cuerpo.isPickable = false;
 
     const cabeza = BABYLON.MeshBuilder.CreateSphere(
       `cv_remoto_cabeza_${participante.id}`,
-      { diameter: 0.95, segments: 12 },
+      { diameter: 0.95 * factor, segments: 12 },
       ctx.escena,
     );
-    cabeza.position.y = ALTURA_PERSONAJE_U * 0.9;
+    cabeza.position.y = ALTURA_OBJETIVO_U * 0.9;
     cabeza.parent = raiz;
     cabeza.isPickable = false;
 
@@ -332,23 +425,136 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     return raiz;
   }
 
-  /** Construye (o no) el cuerpo de un participante a partir del cuerpo local. */
-  function crearCuerpo(participante: Participante): BABYLON.TransformNode {
-    const local = plantilla();
+  /**
+   * Deja un esqueleto clonado INDEPENDIENTE de su fuente y en pose de pie.
+   *
+   * `Skeleton.clone()` copia el enlace hueso→nodo del original —¡y apunta
+   * a los nodos del ORIGINAL!— y, como los clips animan nodos, sin esto el
+   * avatar remoto repetiría al unísono cada movimiento del cuerpo del que
+   * se clonó (el bug de "al caminar con uno, el otro se mueve"; medido con
+   * NullEngine: el clon seguía al original frame a frame, 65/65 huesos).
+   *
+   * Al desenlazar, cada hueso se queda en su matriz de enlace (T-pose en
+   * estos .glb), así que ANTES se le pone la pose del clip "parado" — la
+   * misma con la que el jugador local queda de pie—, evaluada a hueso por
+   * nombre (los clips apuntan a nodos, pero el nodo y el hueso de una
+   * articulación se llaman igual). Sin clip de parado se copia la pose
+   * actual de la fuente: mejor un reposo congelado que una T.
+   */
+  function liberarEsqueleto(destino: BABYLON.Skeleton, fuente: Personaje): void {
+    const parado = fuente.animaciones.parado;
 
-    if (!local?.raiz) {
-      const sustituto = crearAvatarSustituto(participante);
-      anotarCuerpo(participante.id, `SUSTITUTO · sin cuerpo local · alto ${altoDe(sustituto).toFixed(2)} u`);
-      return sustituto;
+    if (parado) {
+      const frame = (parado.from + parado.to) / 2;
+      const porNombre = new Map(destino.bones.map((h) => [h.name, h]));
+      for (const objetivo of parado.targetedAnimations) {
+        const nombre = (objetivo.target as { name?: string } | null)?.name;
+        const hueso = nombre ? porNombre.get(nombre) : undefined;
+        if (!hueso) continue;
+        const prop = objetivo.animation.targetProperty;
+        const bruto = objetivo.animation.evaluate(frame);
+        const valor =
+          bruto && typeof (bruto as { clone?: () => unknown }).clone === "function"
+            ? (bruto as { clone: () => unknown }).clone()
+            : bruto;
+        if (prop === "rotationQuaternion") hueso.rotationQuaternion = valor as BABYLON.Quaternion;
+        else if (prop === "position") hueso.position = valor as BABYLON.Vector3;
+        else if (prop === "scaling") hueso.scaling = valor as BABYLON.Vector3;
+      }
+    } else {
+      const original = fuente.esqueleto;
+      if (original && original.bones.length === destino.bones.length) {
+        for (let i = 0; i < destino.bones.length; i++) {
+          const hueso = destino.bones[i];
+          const base = original.bones[i];
+          hueso.position.copyFrom(base.position);
+          hueso.rotationQuaternion = base.getRotationQuaternion().clone();
+          hueso.scaling = base.getScale().clone();
+        }
+      }
+    }
+
+    // Al final, nunca al principio: mientras el enlace siga puesto,
+    // `prepare()` sobrescribiría estos valores con los nodos de la fuente.
+    for (const hueso of destino.bones) hueso.linkTransformNode(null);
+  }
+
+  /**
+   * Re-apunta los clips de la fuente al esqueleto PROPIO de este clon.
+   *
+   * Los clips animan TransformNodes, pero el cuerpo remoto quedó con los
+   * huesos desenlazados (liberarEsqueleto), así que aquí se crea un
+   * AnimationGroup por acción apuntando a los HUESOS del clon: el nodo y
+   * el hueso de una articulación comparten nombre normalizado (igual que
+   * mapaDeEnlaces en animaciones.ts). Cada avatar lleva los suyos —dos
+   * personas con la misma skin no comparten grupos ni estado de
+   * reproducción— y las animaciones se clonan para no tocar las de la
+   * fuente (que al liberar plantillas se disposean).
+   *
+   * Medido con NullEngine (probarAnimRemota.mjs): un AnimationGroup sobre
+   * un hueso desenlazado se comporta igual que sobre un nodo y
+   * `prepare()` no lo pisa.
+   */
+  function crearGruposDeClon(
+    clon: BABYLON.TransformNode,
+    esqueletos: Map<BABYLON.Skeleton, BABYLON.Skeleton>,
+    fuente: Personaje,
+  ): Partial<AnimacionesPersonaje> {
+    const grupos: Partial<AnimacionesPersonaje> = {};
+
+    // Huesos del clon por nombre normalizado (todos sus esqueletos).
+    const huesos = new Map<string, BABYLON.Bone>();
+    for (const esqueleto of esqueletos.values()) {
+      for (const hueso of esqueleto.bones) {
+        const clave = normalizarNombre(hueso.name);
+        if (clave && !huesos.has(clave)) huesos.set(clave, hueso);
+      }
+    }
+    if (huesos.size === 0) return grupos;
+
+    const entradas = Object.entries(fuente.animaciones) as Array<
+      [SlotAnimacion, BABYLON.AnimationGroup | null]
+    >;
+    for (const [slot, original] of entradas) {
+      if (!original) continue;
+      const grupo = new BABYLON.AnimationGroup(`cv_${slot}_${clon.name}`, ctx.escena);
+      let apuntados = 0;
+      for (const canal of original.targetedAnimations) {
+        const nombre = (canal.target as { name?: string } | null)?.name;
+        const clave = nombre ? normalizarNombre(nombre) : "";
+        const hueso = clave ? huesos.get(clave) : undefined;
+        if (!hueso) continue; // raíces u otros nodos que no son hueso (el viaje
+        // raíz no interesa: el remoto ya se mueve con su objetivo de red).
+        grupo.addTargetedAnimation(canal.animation.clone(), hueso);
+        apuntados++;
+      }
+      if (apuntados === 0) grupo.dispose();
+      else grupos[slot] = grupo;
+    }
+    return grupos;
+  }
+
+  /**
+   * Cuerpo clonado de la skin que le toca a ESTA persona, ya con
+   * esqueleto propio, en pose de reposo y con sus clips re-apuntados.
+   * Devuelve null si no hay forma de dibujarlo: entonces el avatar se
+   * queda en el sustituto.
+   */
+  function crearCuerpo(
+    participante: Participante,
+    fuente: Personaje | null,
+  ): { cuerpo: BABYLON.TransformNode; grupos: Partial<AnimacionesPersonaje> } | null {
+    if (!fuente || !fuente.raiz) {
+      anotarCuerpo(participante.id, "SUSTITUTO · sin plantilla para su skin");
+      return null;
     }
 
     // clone(nombre, padreNuevo, noClonarHijos): null = sin padre, y sí quiere
     // los hijos (el cuerpo del personaje son decenas de mallas).
-    const clon = local.raiz.clone(`cv_remoto_${participante.id}`, null, false);
+    const clon = fuente.raiz.clone(`cv_remoto_${participante.id}`, null, false);
     if (!clon) {
-      const sustituto = crearAvatarSustituto(participante);
-      anotarCuerpo(participante.id, `SUSTITUTO · clon fallido · alto ${altoDe(sustituto).toFixed(2)} u`);
-      return sustituto;
+      anotarCuerpo(participante.id, "SUSTITUTO · clon fallido");
+      return null;
     }
 
     clon.parent = null;
@@ -360,18 +566,14 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     // solo se pisan posición y rumbo.
     clon.position.set(0, ctx.sueloY, 0);
     clon.rotationQuaternion = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, 0).multiply(
-      local.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity(),
+      fuente.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity(),
     );
 
-    // El punto clave: sin esto el clon seguiría al esqueleto del jugador
-    // local y todos los avatares de la clase se moverían al unísono. La
-    // solución es darle al clon un esqueleto PROPIO (un clone del original,
-    // compartido por todas las mallas de ESTE clon): se dibuja con piel y
-    // queda independiente. OJO: no vale con `skeleton = null`, que es lo
-    // simple — sin esqueleto estos .glb colapsan a un punto de 0.01 u en el
-    // piso, porque el tamaño del cuerpo lo dan las matrices de los huesos
-    // (medido con NullEngine: 0.01 u de vértices crudos frente a 5.63 u
-    // dibujados con piel). El esqueleto original NO se toca.
+    // Esqueleto PROPIO de este clon (un clone del original, compartido
+    // entre las mallas de ESTE clon): sin esqueleto estos .glb colapsan a
+    // 0.01 u en el piso, porque el tamaño del cuerpo lo dan las matrices
+    // de los huesos (medido con NullEngine: 0.01 u de vértices crudos
+    // frente a 5.63 u dibujados con piel). El de la fuente NO se toca.
     const mallas = clon.getChildMeshes(false);
     const esqueletos = new Map<BABYLON.Skeleton, BABYLON.Skeleton>();
     for (const malla of mallas) {
@@ -393,14 +595,17 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     if (mallas.length === 0) {
       console.warn(`[avataresRemotos] ${clon.name} no trae mallas: se usa el avatar de sustitución.`);
       clon.dispose(false, false);
-      const sustituto = crearAvatarSustituto(participante);
-      anotarCuerpo(participante.id, `SUSTITUTO · clon sin mallas · alto ${altoDe(sustituto).toFixed(2)} u`);
-      return sustituto;
+      anotarCuerpo(participante.id, "SUSTITUTO · clon sin mallas");
+      return null;
     }
+
+    // Rompe el enlace con los nodos de la fuente y posa el cuerpo (ver
+    // liberarEsqueleto): sin esto el remoto imitaría a quien se clonó.
+    for (const copia of esqueletos.values()) liberarEsqueleto(copia, fuente);
 
     anotarCuerpo(participante.id, detalleDe(clon, mallas));
 
-    return clon;
+    return { cuerpo: clon, grupos: crearGruposDeClon(clon, esqueletos, fuente) };
   }
 
   // ---------------------------------------------------------------
@@ -414,56 +619,140 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     avatar.caminando = estado.caminando;
     avatar.manoAlzada = estado.manoAlzada;
     avatar.sentado = estado.sentado;
+    avatar.estadoRed = estado;
+    aplicarClipRemoto(avatar);
     // Solo la subida apagada → encendida (el primer estado de alguien que ya
     // tenía la mano arriba no avisa: no es algo que "acaba de pasar").
     if (estado.manoAlzada && !manoAntes) ctx.alAlzarMano?.(avatar.nombre);
   }
 
-  function crearAvatar(participante: Participante): void {
-    if (avatares.has(participante.id)) return;
-
-    const raiz = crearCuerpo(participante);
-    const etiqueta = crearEtiqueta(participante.nombre, participante.rol, participante.id);
-    const anillo = crearAnillo(participante.rol, participante.id);
-
-    const avatar: AvatarRemoto = {
-      id: participante.id,
-      nombre: participante.nombre,
-      raiz,
-      etiqueta,
-      anillo,
-      objetivo: new BABYLON.Vector3(participante.estado.x, ctx.sueloY, participante.estado.z),
-      yawObjetivo: participante.estado.yaw,
-      caminando: false,
-      // Ya con el valor actual: así la primera llamada a fijarObjetivo no
-      // cuenta como "acaba de levantar la mano" (no dispara el aviso).
-      manoAlzada: participante.estado.manoAlzada,
-      sentado: false,
-      fase: Math.random() * Math.PI * 2,
-      baseY: ctx.sueloY,
-      posicionRecibida: false,
-    };
-    fijarObjetivo(avatar, participante.estado);
-
-    // El servidor spawna a quien entra en el centro de la clase con y=0 (aún
-    // no ha publicado nada) y el suelo de ESTE mapa está en sueloY. Si el
-    // estado de la lista es ese spawn vacío, se arranca en el suelo y espera
-    // al primer movimiento de verdad; si no, es que esa persona ya estaba
-    // dentro y su estado es real: se coloca ahí directamente.
-    const vacio = esEstadoInicial(participante.estado);
-    if (vacio) {
-      avatar.objetivo.y = ctx.sueloY;
-      avatar.baseY = ctx.sueloY;
-      avatar.posicionRecibida = false;
-    } else {
-      avatar.posicionRecibida = true;
+  /**
+   * Qué clip debe sonar en este avatar con el último estado de la red.
+   * Misma prioridad que la máquina local (aplicarAnimacion en
+   * funcionalidades.ts): sentado (con la mano si está alzada) → caminar →
+   * mano alzada → parado. Lo que la skin no tenga cae al siguiente eslabón.
+   */
+  function elegirClipRemoto(avatar: AvatarRemoto): BABYLON.AnimationGroup | null {
+    const g = avatar.grupos;
+    const e = avatar.estadoRed;
+    if (e.sentado) {
+      if (e.manoAlzada && g.manoSentado) return g.manoSentado;
+      return g.sentarse ?? g.parado ?? null;
     }
+    if (e.caminando) return g.caminar ?? g.parado ?? null;
+    if (e.manoAlzada) return g.manoParado ?? g.saludar ?? g.parado ?? null;
+    return g.parado ?? null;
+  }
 
-    raiz.position.set(avatar.objetivo.x, avatar.objetivo.y, avatar.objetivo.z);
-    etiqueta.position.set(avatar.objetivo.x, avatar.objetivo.y + ALTURA_ETIQUETA, avatar.objetivo.z);
-    anillo.position.set(avatar.objetivo.x, ctx.sueloY + 0.06, avatar.objetivo.z);
+  /**
+   * Cambia el clip en reproducción SOLO si cambió el elegido: los estados
+   * llegan a ~12/s y reiniciar el grupo en cada uno dejaría al cuerpo
+   * siempre en el primer frame. Los clips de una sola pasada (sentarse,
+   * mano sentada) arrancan sin loop y se quedan en su pose final, igual
+   * que en la máquina local.
+   */
+  function aplicarClipRemoto(avatar: AvatarRemoto): void {
+    const deseado = elegirClipRemoto(avatar);
+    if (deseado === avatar.grupoActual) return;
+    avatar.grupoActual?.stop();
+    avatar.grupoActual = deseado;
+    if (!deseado) return;
+    const esPose = deseado === avatar.grupos.sentarse || deseado === avatar.grupos.manoSentado;
+    deseado.play(!esPose);
+  }
 
-    avatares.set(participante.id, avatar);
+  /**
+   * Alta de un avatar en escena. Es ASÍNRONA a propósito: primero aparece
+   * la cápsula de sustitución con su etiqueta (la persona se ve enseguida,
+   * aunque su skin tarde en cargar) y, en cuanto la plantilla de su skin
+   * está lista, la cápsula se sustituye por su cuerpo real.
+   */
+  async function crearAvatar(participante: Participante): Promise<void> {
+    if (avatares.has(participante.id) || creando.has(participante.id)) return;
+    creando.add(participante.id);
+
+    try {
+      const raiz = crearAvatarSustituto(participante);
+      anotarCuerpo(participante.id, `SUSTITUTO · cargando skin · alto ${altoDe(raiz).toFixed(2)} u`);
+      const etiqueta = crearEtiqueta(participante.nombre, participante.rol, participante.id);
+      const anillo = crearAnillo(participante.rol, participante.id);
+
+      const avatar: AvatarRemoto = {
+        id: participante.id,
+        nombre: participante.nombre,
+        raiz,
+        rotacionBase: null,
+        etiqueta,
+        anillo,
+        objetivo: new BABYLON.Vector3(participante.estado.x, ctx.sueloY, participante.estado.z),
+        yawObjetivo: participante.estado.yaw,
+        caminando: false,
+        // Ya con el valor actual: así la primera llamada a fijarObjetivo no
+        // cuenta como "acaba de levantar la mano" (no dispara el aviso).
+        manoAlzada: participante.estado.manoAlzada,
+        sentado: false,
+        // Sin clips hasta que cargue el cuerpo real (la cápsula se queda aquí).
+        grupos: {},
+        grupoActual: null,
+        estadoRed: participante.estado,
+        fase: Math.random() * Math.PI * 2,
+        baseY: ctx.sueloY,
+        posicionRecibida: false,
+      };
+      fijarObjetivo(avatar, participante.estado);
+
+      // El servidor spawna a quien entra en el centro de la clase con y=0 (aún
+      // no ha publicado nada) y el suelo de ESTE mapa está en sueloY. Si el
+      // estado de la lista es ese spawn vacío, se arranca en el suelo y espera
+      // al primer movimiento de verdad; si no, es que esa persona ya estaba
+      // dentro y su estado es real: se coloca ahí directamente.
+      const vacio = esEstadoInicial(participante.estado);
+      if (vacio) {
+        avatar.objetivo.y = ctx.sueloY;
+        avatar.baseY = ctx.sueloY;
+        avatar.posicionRecibida = false;
+      } else {
+        avatar.posicionRecibida = true;
+      }
+
+      raiz.position.set(avatar.objetivo.x, avatar.objetivo.y, avatar.objetivo.z);
+      etiqueta.position.set(avatar.objetivo.x, avatar.objetivo.y + alturaEtiqueta(), avatar.objetivo.z);
+      anillo.position.set(avatar.objetivo.x, ctx.sueloY + 0.06, avatar.objetivo.z);
+
+      avatares.set(participante.id, avatar);
+
+      // ── cuerpo real, cuando su skin esté ──
+      const fuente = await plantillaPara(participante);
+      // Mientras cargaba pudo salir de la sala o caer la conexión: si ya
+      // no está, no se dibuja (y si llegó a estar, `borrarAvatar` ya se
+      // ocupó de la cápsula).
+      if (!avatares.has(participante.id) || !ultimaLista.some((p) => p.id === participante.id)) return;
+      if (!fuente) {
+        anotarCuerpo(participante.id, "SUSTITUTO · sin skin disponible");
+        return;
+      }
+
+      const cuerpoNuevo = crearCuerpo(participante, fuente);
+      if (!cuerpoNuevo || !avatares.has(participante.id)) return; // se queda la cápsula
+      const { cuerpo, grupos } = cuerpoNuevo;
+
+      // Intercambio: el cuerpo nuevo nace en el sitio y con el rumbo del
+      // avatar ya colocada; la etiqueta y el anillo no se tocan.
+      const anterior = avatar.raiz;
+      avatar.raiz = cuerpo;
+      avatar.rotacionBase = fuente.rotacionBaseRaiz;
+      cuerpo.position.copyFrom(anterior.position);
+      cuerpo.rotationQuaternion = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, avatar.yawObjetivo).multiply(
+        fuente.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity(),
+      );
+      avatar.grupos = grupos;
+      anterior.dispose(false, true);
+      // El cuerpo ya tiene sus clips: arranca el que toque con el último
+      // estado que mandó (p. ej. si la skin cargó mientras estaba sentado).
+      aplicarClipRemoto(avatar);
+    } finally {
+      creando.delete(participante.id);
+    }
   }
 
   function borrarAvatar(id: string): void {
@@ -471,6 +760,11 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     if (!avatar) return;
     avatares.delete(id);
     borrarAnotacion(id);
+
+    // Sus grupos de animación son propios: apuntan a los huesos de ESTE
+    // avatar, así que se liberan con él.
+    avatar.grupoActual = null;
+    for (const grupo of Object.values(avatar.grupos)) grupo?.dispose();
 
     // dispose() en la raíz se lleva también sus hijos (el cuerpo).
     // Los esqueletos clonados pertenecen SOLO a este avatar (están
@@ -523,16 +817,27 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
       // también cuando el otro está sentado o en el atril).
       avatar.baseY += (avatar.objetivo.y - avatar.baseY) * paso;
 
-      // Balanceo al caminar: sin esqueleto es lo único que da sensación
-      // de que el avatar se está moviendo y no solo deslizándose.
-      const bob = avatar.caminando ? Math.sin(performance.now() * 0.009 + avatar.fase) * BOB_CAMINANDO : 0;
+      // Balanceo al caminar: solo para quien NO tiene clip de caminar
+      // (la cápsula de sustitución o una skin sin ese clip). Con clip
+      // real el cuerpo ya se mueve solo, y el doble rebote se ve raro.
+      const bob =
+        avatar.caminando && !avatar.grupos.caminar
+          ? Math.sin(performance.now() * 0.009 + avatar.fase) * BOB_CAMINANDO
+          : 0;
       avatar.raiz.position.y = avatar.baseY + bob;
 
       // Rumbo: se gira por el camino más corto. Sin esto, al pasar de
       // 179° a −179° (son 2° de verdad) daría una vuelta completa.
       const dif = angleToRadians(avatar.raiz, avatar.yawObjetivo);
       if (Math.abs(dif) > 1e-4) {
-        aplicarRumbo(avatar.raiz, avatar.raiz.rotationQuaternion, avatar.yawObjetivo, paso, dif);
+        aplicarRumbo(
+          avatar.raiz,
+          avatar.rotacionBase,
+          avatar.raiz.rotationQuaternion,
+          avatar.yawObjetivo,
+          paso,
+          dif,
+        );
       }
 
       // La etiqueta y el anillo NO son hijos de la raíz a propósito: la
@@ -540,7 +845,7 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
       // heredaría esa escala, con la etiqueta diminuta o gigante.
       avatar.etiqueta.position.set(
         avatar.raiz.position.x,
-        avatar.raiz.position.y + ALTURA_ETIQUETA,
+        avatar.raiz.position.y + alturaEtiqueta(),
         avatar.raiz.position.z,
       );
       avatar.anillo.position.set(
@@ -555,16 +860,19 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
    * Giro del avatar hacia el rumbo recibido, por el camino corto.
    * La raíz del .glb trae rotationQuaternion (el loader glTF la crea), así
    * que se compone igual que hace el jugador local en funcionalidades.ts.
+   * `base` es la rotación `__root__` del cuerpo CONCRETO de este avatar
+   * (cada skin puede traerla distinta), no la del cuerpo local.
    */
   function aplicarRumbo(
     raiz: BABYLON.TransformNode,
+    base: BABYLON.Quaternion | null,
     actual: BABYLON.Quaternion | null,
     objetivo: number,
     paso: number,
     diferencia: number,
   ): void {
-    const base = (plantilla()?.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity()).clone();
-    const destino = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, objetivo).multiply(base);
+    const rotacionBase = (base ?? BABYLON.Quaternion.Identity()).clone();
+    const destino = BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, objetivo).multiply(rotacionBase);
 
     if (!actual) {
       raiz.rotationQuaternion = destino;
@@ -598,16 +906,20 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
 
   presencia = crearPresencia(ctx.clase, {
     alCambiarParticipantes: (participantes, miId) => {
+      ultimaLista = participantes;
+
       // Sin id propio no se dibuja a nadie (ver nota de espera arriba).
       if (!miId) {
         ctx.alCambiarParticipantes(participantes, miId);
         return;
       }
 
-      // Altas: los que no tengo en la escena.
+      // Altas: los que no tengo en la escena. El alta es asíncrona (a veces
+      // hay que cargar la skin de esa persona primero); `crearAvatar` se
+      // protege sola contra dobles avisos.
       for (const participante of participantes) {
         if (participante.id === miId) continue; // uno mismo no se clona
-        if (!avatares.has(participante.id)) crearAvatar(participante);
+        if (!avatares.has(participante.id)) void crearAvatar(participante);
       }
       // Bajas: los que ya no están en la lista del servidor.
       const ids = new Set(participantes.filter((p) => p.id !== miId).map((p) => p.id));
@@ -647,6 +959,11 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     },
 
     alRechazar: (motivo) => ctx.alRechazar(motivo),
+
+    // El contenido que otro publica en el tablero llega por aquí y se lo
+    // entrega al mapa (que lo pinta en su pizarra) sin que el 3D tenga
+    // que saber nada de sockets.
+    alRecibirTablero: (mensaje) => ctx.alRecibirTablero?.(mensaje),
   });
 
   // El propio estado se lee en cada frame y se pasa al publicador, que
@@ -660,15 +977,57 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     presencia?.destruir();
     presencia = null;
     borrarTodos();
+
+    // Las plantillas de skin cargadas para los remotos son de este módulo:
+    // se liberan al final, cuando sus clones ya no existen (comparten
+    // materiales con ellos). El cuerpo del jugador local no es suyo: no se
+    // toca.
+    for (const pendiente of plantillas.values()) {
+      void pendiente.then((cuerpo) => {
+        if (!cuerpo) return;
+        for (const grupo of Object.values(cuerpo.animaciones)) grupo?.dispose();
+        const esqueletos = new Set<BABYLON.Skeleton>();
+        for (const malla of cuerpo.raiz.getChildMeshes(false)) {
+          if (malla.skeleton) esqueletos.add(malla.skeleton);
+        }
+        for (const esqueleto of esqueletos) esqueleto.dispose();
+        cuerpo.raiz.dispose(false, true);
+      });
+    }
+    plantillas.clear();
+
     ctx.escena.onBeforeRenderObservable.remove(observador);
     ctx.escena.onBeforeRenderObservable.remove(observadorPublicacion);
   }
 
   ctx.limpiadores.push(destruir);
 
+  function posicionCabeza(id: string): BABYLON.Vector3 | null {
+    const avatar = avatares.get(id);
+    if (!avatar || !avatar.posicionRecibida) return null;
+    // Altura de la etiqueta del nombre: el cuadrito de vídeo se ancla AL
+    // LADO de ese punto (derecha si cabe, izquierda si no), centrado en
+    // vertical con la cabeza, en vez de flotar encima del personaje.
+    return new BABYLON.Vector3(
+      avatar.raiz.position.x,
+      avatar.raiz.position.y + alturaEtiqueta(),
+      avatar.raiz.position.z,
+    );
+  }
+
+  function nombreDe(id: string): string {
+    return avatares.get(id)?.nombre ?? "";
+  }
+
   return {
     participantes: () => presencia?.participantes() ?? [],
     miId: () => presencia?.miId() ?? null,
+    publicarTablero: (mensaje) => presencia?.publicarTablero(mensaje),
+    posicionCabeza,
+    anchoEtiqueta: () => anchoEtiqueta(),
+    nombreDe,
+    emitirSignaling: (evento, datos) => presencia?.emitirSignaling(evento, datos),
+    escucharSignaling: (evento, fn) => presencia?.escucharSignaling(evento, fn) ?? (() => {}),
     destruir,
   };
 }
@@ -819,4 +1178,14 @@ function detalleDe(clon: BABYLON.TransformNode, mallas: BABYLON.AbstractMesh[]):
 // Y nada de esto toca al jugador local: cada malla tiene su propio
 // puntero a esqueleto, así que el clon (y su esqueleto copiado)
 // dejan al original con el suyo y sus animaciones siguen igual.
+//
+// ACTUALIZADO (medido con NullEngine, probarClonEnlace.mjs): con el
+// esqueleto clonado NO bastaba. `Skeleton.clone()` copia además el
+// enlace hueso→nodo del original —apuntando a los nodos del ORIGINAL—
+// y, como los clips animan nodos, el remoto ejecutaba los pasos del
+// cuerpo del que se clonó (65 de 65 huesos enlazados: al rotar un nodo
+// del original, el clon se movía con él). Por eso a cada esqueleto
+// clonado se le llama `linkTransformNode(null)` y se le pone antes la
+// pose del clip "parado" (ver liberarEsqueleto): pose de pie propia,
+// cero influencia externa, y el original intacto.
 // ---------------------------------------------------------------

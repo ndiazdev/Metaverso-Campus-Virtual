@@ -42,7 +42,7 @@
 import { io } from "socket.io-client";
 import type { Socket } from "socket.io-client";
 import { API_URL } from "../api/cliente";
-import { obtenerGeneroAvatar, obtenerSesion } from "../state/estado";
+import { obtenerGeneroAvatar, obtenerSesion, obtenerToken } from "../state/estado";
 import type { GeneroAvatar, Rol } from "../state/estado";
 
 /** Cómo va la conexión; se refleja en la píldora de conectados. */
@@ -78,6 +78,41 @@ export interface Participante {
   estado: EstadoAvatar;
 }
 
+/**
+ * Contenido del tablero del aula que viaja por la sala: uno publica y
+ * todos lo ven en SU pizarra. `imagen` es un data URL JPEG (las URL de
+ * blob viven solo en el navegador que las creó, así que no le sirven
+ * a nadie más); `youtube` va por enlace, que sí es universal.
+ */
+export type MensajeTablero =
+  | { tipo: "imagen"; imagen: string }
+  | { tipo: "youtube"; url: string }
+  | { tipo: "limpiar" };
+
+/**
+ * Tope de un mensaje de tablero, en caracteres. Lo que sale del cliente
+ * es un JPEG de ≤1600 px de ancho (≈0,5 MB en base64): esto deja margen
+ * de sobra y, sobre todo, evita que un cliente hostil pase megas por
+ * mensaje reenviándolos a toda la sala.
+ */
+const MAX_TABLERO_CARACTERES = 4_000_000;
+
+/** La red es de todos: solo se reenvía lo que se reconoce del mensaje. */
+function esMensajeTablero(valor: unknown): valor is MensajeTablero {
+  if (typeof valor !== "object" || valor === null) return false;
+  const m = valor as Record<string, unknown>;
+  if (m.tipo === "limpiar") return true;
+  if (m.tipo === "imagen") {
+    return (
+      typeof m.imagen === "string" &&
+      m.imagen.startsWith("data:image/") &&
+      m.imagen.length <= MAX_TABLERO_CARACTERES
+    );
+  }
+  if (m.tipo === "youtube") return typeof m.url === "string" && m.url.length <= 500;
+  return false;
+}
+
 export interface OpcionesPresencia {
   /** Cambió la lista de gente de la clase (entró o salió alguien). */
   alCambiarParticipantes: (participantes: Participante[], miId: string | null) => void;
@@ -92,15 +127,30 @@ export interface OpcionesPresencia {
   alCambiarConexion: (estado: EstadoConexion, detalle?: string) => void;
   /** El servidor denegó la entrada a la clase. */
   alRechazar: (motivo: string) => void;
+  /** Otro de la sala publicó contenido en el tablero del aula. */
+  alRecibirTablero?: (mensaje: MensajeTablero) => void;
 }
 
 export interface Presencia {
   /** Se llama en cada frame: aquí dentro se decide si toca enviar. */
   publicar: (estado: EstadoLocal) => void;
+  /** Manda el contenido del tablero del aula al resto de la sala. */
+  publicarTablero: (mensaje: MensajeTablero) => void;
   /** Gente que hay ahora mismo en la clase (incluido uno mismo). */
   participantes: () => Participante[];
   /** Id de esta conexión; sirve para marcar "(tú)" en la lista. */
   miId: () => string | null;
+  /**
+   * Señalización WebRTC: envía un mensaje al servidor (se lo reenvía a la
+   * sala o a un socket concreto, ver backend/src/tiempoReal.ts). El vídeo
+   * en sí NUNCA pasa por aquí: solo ofertas SDP y candidatos ICE.
+   */
+  emitirSignaling: (evento: string, datos: unknown) => void;
+  /**
+   * Escucha un evento de señalización del servidor. Devuelve la función
+   * para quitar el listener (al apagar la cámara o al salir).
+   */
+  escucharSignaling: (evento: string, fn: (datos: any) => void) => () => void;
   /** Corta la conexión y suelta los temporizadores. */
   destruir: () => void;
 }
@@ -226,6 +276,18 @@ export function crearPresencia(
     }
   }
 
+  /**
+   * El contenido del tablero va aparte del estado del avatar: no es un
+   * flujo de 12/s, sino eventos ocasionales (publicar, pasar de página,
+   * limpiar) de hasta unos cientos de kB. Sin conexión no se encola nada:
+   * al volver a entrar, el que tiene contenido en su tablero lo reenvía
+   * (ver `republicarContenido` del tablero), así que nada se pierde.
+   */
+  function publicarTablero(mensaje: MensajeTablero): void {
+    if (!socket || !socket.connected || !esMensajeTablero(mensaje)) return;
+    socket.emit("sala:tablero", mensaje);
+  }
+
   // ---------------------------------------------------------------
   // CONEXIÓN
   // ---------------------------------------------------------------
@@ -268,9 +330,9 @@ export function crearPresencia(
 
   function arrancar(): void {
     opciones.alCambiarConexion("conectando");
-
     socket = io(calcularUrlDeSockets(), {
       transports: ["websocket", "polling"],
+      auth: { token: obtenerToken() || undefined },
       // Si el servidor reinicia, socket.io reintenta solo; al reconectar
       // hay que volver a pedir la sala, porque el id de socket cambió y
       // el servidor no se acuerda de a qué clase estábamos.
@@ -321,6 +383,14 @@ export function crearPresencia(
       if (objetivo) objetivo.estado = datos.estado;
       opciones.alMover(datos.id, datos.estado);
     });
+
+    // Contenido del tablero publicado por otro de la clase (el servidor
+    // excluye al emisor). Se valida antes de tocar la escena: la red es
+    // de todos y de ahí solo debe salir lo reconocible.
+    socket.on("sala:tablero", (datos: unknown) => {
+      if (!esMensajeTablero(datos)) return;
+      opciones.alRecibirTablero?.(datos);
+    });
   }
 
   function destruir(): void {
@@ -337,12 +407,26 @@ export function crearPresencia(
     socket = null;
   }
 
+  function emitirSignaling(evento: string, datos: unknown): void {
+    if (!socket || !socket.connected) return;
+    socket.emit(evento, datos);
+  }
+
+  function escucharSignaling(evento: string, fn: (datos: any) => void): () => void {
+    if (!socket) return () => {};
+    socket.on(evento, fn);
+    return () => socket?.off(evento, fn);
+  }
+
   arrancar();
 
   return {
     publicar,
+    publicarTablero,
     participantes: () => lista,
     miId: () => miId,
+    emitirSignaling,
+    escucharSignaling,
     destruir,
   };
 }

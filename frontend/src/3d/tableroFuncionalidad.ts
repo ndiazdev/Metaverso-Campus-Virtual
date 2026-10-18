@@ -11,6 +11,7 @@
  *     material,                       // su material emisivo
  *     scene,
  *     volumen: () => volumenGeneral,  // el mapa es dueño del volumen
+ *     rol: () => obtenerSesion()?.rol ?? "estudiante",
  *   });
  *
  *   tablero.abrirMenu();        // con P, mientras se está en el atril
@@ -20,10 +21,16 @@
  *
  * QUÉ SABE HACER
  *   · PDF → diapositivas (pdf.js), imágenes/galerías y vídeo del ordenador.
+ *   · Notas de la pizarra escritas con el TECLADO (como un bloc de notas) y
+ *     descargables como archivo de texto (.txt), en vez de PDF.
  *   · Link de YouTube montado con la IFrame Player API, para que 🔊 lo silencie
  *     de verdad (un <iframe> normal no expone `.volume`).
  *   · Compartir pantalla (getDisplayMedia) proyectada sobre la misma malla.
  *   · Limpiar, pausar/reanudar (Espacio) y pasar diapositivas (←/→).
+ *   · Vista del presentador: una pantallita con la pizarra mientras se está
+ *     en el atril, para no tener que girarse a mirarla.
+ *   · Menú filtrado por rol: docente y admin publican de todo; estudiante e
+ *     invitado, solo diapositivas y notas (el tablero es compartido).
  *
  * VOLUMEN: este módulo SOLO LEE el volumen que le pasa el mapa; nunca decide ni
  * toca el del portátil. El slider manda sobre el sonido de la APP (vídios,
@@ -35,7 +42,8 @@ import * as BABYLON from "babylonjs";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import { homografia, aplicar, invertir, matriz3d, type Punto } from "./homografia";
-import { paginasDesdeLienzos, descargarPdf } from "./descargarPDF";
+import type { MensajeTablero } from "../red/presencia";
+import type { Rol } from "../state/estado";
 
 // Configuración del worker de PDF.js (usado por convertirPdfAImagenes).
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
@@ -64,8 +72,8 @@ interface RectPizarra {
  * tape lo que queda por delante de la pizarra.
  *
  * ¿Por qué hace falta? En 3D la persona pasa por delante del vídeo, pero el
- * <iframe> de YouTube y el lienzo son HTML y el HTML SIEMPRE se pinta encima
- * del canvas: sin este recorte, al mirar de frente el vídeo quedaba encima de
+ * <iframe> de YouTube y el papel de notas son HTML y el HTML SIEMPRE se pinta
+ * encima del canvas: sin este recorte, al mirar de frente el vídeo quedaba encima de
  * la cabeza del personaje. Con la silueta se le abre un agujero con su forma y
  * se ve el personaje por encima, como en el mundo real.
  */
@@ -88,6 +96,19 @@ export interface OpcionesTablero {
   scene: BABYLON.Scene;
   /** Volumen general vigente (0..1). El tablero solo lo lee. */
   volumen: () => number;
+  /**
+   * El tablero es del SALÓN, no de uno solo: cada vez que cambia lo que se
+   * ve aquí (publicar, pasar de diapositiva, limpiar), este callback manda
+   * una copia al resto de la sala. Sin él (mapa en solitario) no se manda
+   * nada: el tablero funciona igual que siempre.
+   */
+  alPublicar?: (mensaje: MensajeTablero) => void;
+  /**
+   * Rol de quien maneja este tablero. El menú "Publicar" se FILTRA con él:
+   * docente y admin publican de todo; estudiantes (e invitados) solo
+   * diapositivas y notas, que es lo que se les permite subir.
+   */
+  rol: () => Rol;
 }
 
 export interface Tablero {
@@ -110,11 +131,29 @@ export interface Tablero {
   limpiar: () => void;
   /** ¿Hay algo publicado ahora mismo? */
   hayContenido: () => boolean;
-  /** TABLERO INTELIGENTE: escribe con el ratón o el dedo sobre la pizarra. */
+  /**
+   * VISTA DEL PRESENTADOR: una pantallita en la esquina con lo que está
+   * en el tablero, para quien está en el atril y no quiere dejar de mirar
+   * a la clase. Solo se muestra con `true` (mientras se presenta).
+   */
+  vistaPresentador: (activa: boolean) => void;
+  /**
+   * Pinta en ESTE tablero algo que publicó otro de la sala. Es el único
+   * camino de entrada de la red: NO se vuelve a publicar, para que un
+   * mensaje recibido no genere un eco infinito entre los dos clientes.
+   */
+  aplicarMensaje: (mensaje: MensajeTablero) => void;
+  /**
+   * Reenvía a la sala lo que se está viendo ahora. Se llama cuando entra
+   * alguien nuevo a la clase: así quien llega ve al instante lo que se
+   * está presentando sin tener que pedirlo.
+   */
+  republicarContenido: () => void;
+  /** TABLERO INTELIGENTE: el papel de notas, escrito con el teclado. */
   escribirEnElTablero: () => void;
   /** Deja de escribir sin borrar lo escrito (Esc o ✔ Listo). */
   terminarDeEscribir: () => void;
-  /** true mientras se esté escribiendo (el ratón debe quedarse libre). */
+  /** true mientras se esté escribiendo en las notas (el ratón debe quedarse libre). */
   dibujoAbierto: () => boolean;
   /**
    * PANTALLA EN GRANDE: el contenido del tablero a pantalla completa para quien
@@ -130,7 +169,7 @@ export interface Tablero {
    * Llamar en cada frame. `silueta` (opcional) son puntos en coordenadas de
    * mundo que deben verse POR DELANTE del contenido —normalmente los huesos
    * del personaje en 3ª persona—: con ellos se recortan el iframe de YouTube
-   * y el lienzo para que la persona no quede tapada por el vídeo. Maps que no
+   * y el papel de notas para que la persona no quede tapada por el vídeo. Maps que no
    * lo usen pueden llamar `actualizar()` sin argumentos.
    */
   actualizar: (silueta?: readonly PuntoMundo[] | null) => void;
@@ -190,7 +229,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   <button id="btnSubirVideo" style="width:100%; margin-bottom:8px; padding:10px; border:none; border-radius:8px; background:#F2A93B; color:#1a1a1a; font-weight:bold; cursor:pointer;"><i class="fa-solid fa-film"></i> Video desde el computador</button>
   <button id="btnYoutube" style="width:100%; margin-bottom:8px; padding:10px; border:none; border-radius:8px; background:#F2A93B; color:#1a1a1a; font-weight:bold; cursor:pointer;"><i class="fa-brands fa-youtube"></i> Link de YouTube</button>
   <button id="btnCompartirPantalla" style="width:100%; margin-bottom:8px; padding:10px; border:none; border-radius:8px; background:#F2A93B; color:#1a1a1a; font-weight:bold; cursor:pointer;"><i class="fa-solid fa-display"></i> Compartir pantalla</button>
-  <button id="btnDibujar" style="width:100%; margin-bottom:8px; padding:10px; border:none; border-radius:8px; background:#F2A93B; color:#1a1a1a; font-weight:bold; cursor:pointer;"><i class="fa-solid fa-pen"></i> Escribir en el tablero</button>
+  <button id="btnNotas" style="width:100%; margin-bottom:8px; padding:10px; border:none; border-radius:8px; background:#F2A93B; color:#1a1a1a; font-weight:bold; cursor:pointer;"><i class="fa-solid fa-note-sticky"></i> Notas en el tablero</button>
   <button id="btnLimpiarTablero" style="width:100%; margin-bottom:8px; padding:10px; border:none; border-radius:8px; background:#EF4444; color:#ffffff; font-weight:bold; cursor:pointer;"><i class="fa-solid fa-trash"></i> Limpiar tablero</button>
   <button id="btnCerrarMenu" style="width:100%; padding:8px; border:none; border-radius:8px; background:transparent; color:#9aa8c7; cursor:pointer;">Cancelar (Esc)</button>
 `;
@@ -251,35 +290,54 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     ".tb-full-cerrar:hover{background:#EF4444}";
   document.head.appendChild(estiloCompleto);
 
-  /** TABLERO INTELIGENTE: lienzo y barra de colores. */
-  const estiloDibujo = document.createElement("style");
-  estiloDibujo.textContent =
-    ".td-lienzo{position:absolute;left:0;top:0;z-index:400;background:#fff;" +
-    "touch-action:none;pointer-events:none;cursor:crosshair;display:none}" +
-    ".td-lienzo.td-activo{pointer-events:auto}" +
+  /**
+   * NOTAS EN EL TABLERO: papel blanco con <textarea>, proyectado sobre la
+   * pizarra con la misma homografía que el vídeo. Antes eran trazos con el
+   * ratón; ahora se ESCRIBE con el teclado y se descarga como .txt.
+   */
+  const estiloNotas = document.createElement("style");
+  estiloNotas.textContent =
+    ".td-notas{position:absolute;left:0;top:0;z-index:400;background:#fffdf7;" +
+    "display:none;pointer-events:none;box-sizing:border-box;overflow:hidden}" +
+    ".td-notas.td-activo{pointer-events:auto}" +
+    ".td-notas textarea{width:100%;height:100%;border:0;outline:0;resize:none;" +
+    "background:transparent;box-sizing:border-box;padding:3.5% 4%;margin:0;" +
+    "color:#1f2937;line-height:1.5;font-family:inherit;pointer-events:none;" +
+    "caret-color:#111827;white-space:pre-wrap;overflow-wrap:break-word;word-break:break-word}" +
+    ".td-notas.td-activo textarea{pointer-events:auto}" +
+    ".td-notas textarea::placeholder{color:#94a3b8}" +
     ".td-barra{position:absolute;top:16px;left:50%;transform:translateX(-50%);z-index:2100;" +
     "display:none;gap:8px;align-items:center;padding:8px 14px;border-radius:26px;" +
     "max-width:min(96vw,1080px);flex-wrap:wrap;justify-content:center;" +
     "background:rgba(15,23,42,0.95);border:1px solid rgba(255,255,255,0.18);" +
     "font-family:sans-serif;box-shadow:0 6px 18px rgba(0,0,0,0.35)}" +
     ".td-barra.td-visible{display:flex}" +
-    ".td-color{width:26px;height:26px;padding:0;border-radius:50%;" +
-    "border:2px solid rgba(255,255,255,0.35);cursor:pointer;flex:0 0 auto}" +
-    ".td-color.td-actual{border-color:#fff;box-shadow:0 0 0 3px rgba(125,211,252,0.65)}" +
-    ".td-separador{width:1px;height:22px;background:rgba(255,255,255,0.18);flex:0 0 auto}" +
-    ".td-hoja{width:30px;height:30px;padding:0;border:none;border-radius:50%;flex:0 0 auto;" +
-    "background:rgba(255,255,255,0.12);color:#E2E8F0;font-size:14px;line-height:1;" +
-    "cursor:pointer;transition:background .12s ease,opacity .12s ease}" +
-    ".td-hoja:hover{background:rgba(255,255,255,0.24)}" +
-    ".td-hoja:disabled{opacity:.3;cursor:not-allowed;background:rgba(255,255,255,0.12)}" +
-    ".td-pagina{font-size:12px;color:#cbd5e1;min-width:44px;text-align:center;flex:0 0 auto;" +
-    "font-variant-numeric:tabular-nums;letter-spacing:.3px}" +
     ".td-accion{height:30px;padding:0 13px;border:none;border-radius:999px;flex:0 0 auto;" +
     "background:#F2A93B;color:#1a1a1a;font-weight:bold;font-size:13px;cursor:pointer}" +
     ".td-accion:hover{filter:brightness(1.08)}" +
     ".td-accion.td-suave{background:rgba(255,255,255,0.12);color:#E2E8F0}" +
     ".td-accion.td-suave:hover{background:rgba(255,255,255,0.22);filter:none}";
-  document.head.appendChild(estiloDibujo);
+  document.head.appendChild(estiloNotas);
+
+  /** VISTA DEL PRESENTADOR: la pantallita de quien está en el atril. */
+  const estiloMini = document.createElement("style");
+  estiloMini.textContent =
+    ".tb-mini{position:fixed;left:20px;bottom:96px;z-index:1900;width:min(30vw,380px);" +
+    "border-radius:12px;overflow:hidden;background:rgba(15,23,42,0.96);" +
+    "border:1px solid rgba(255,255,255,0.22);box-shadow:0 8px 24px rgba(0,0,0,0.45);" +
+    "font-family:sans-serif;display:none;cursor:pointer}" +
+    ".tb-mini:hover{border-color:rgba(242,169,59,0.85)}" +
+    ".tb-mini-escribir{float:right;color:#F2A93B;font-weight:bold}" +
+    ".tb-mini-titulo{font-size:11px;letter-spacing:.4px;text-transform:uppercase;" +
+    "color:#9aa8c7;padding:7px 12px 6px;border-bottom:1px solid rgba(255,255,255,0.12)}" +
+    ".tb-mini-zona{position:relative;width:100%;aspect-ratio:16/9;background:#000;" +
+    "display:flex;align-items:center;justify-content:center;overflow:hidden}" +
+    ".tb-mini-zona img{width:100%;height:100%;object-fit:contain;background:#000;display:block}" +
+    ".tb-mini-zona .tb-mini-texto{margin:0;padding:10px 12px;width:100%;height:100%;" +
+    "box-sizing:border-box;overflow:auto;background:#fffdf7;color:#1f2937;" +
+    "font-size:13px;line-height:1.45;white-space:pre-wrap;overflow-wrap:break-word}" +
+    ".tb-mini-zona .tb-mini-vacio{color:#94a3b8;font-size:13px;padding:0 16px;text-align:center}";
+  document.head.appendChild(estiloMini);
 
   // -------------------------------------------------------------------------
   // Estado
@@ -298,6 +356,8 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   let iframeYoutube: HTMLIFrameElement | null = null; // solo en el respaldo sin API
   let reproductorYoutube: ReproductorYoutube | null = null;
   let apiYoutubeLista: Promise<void> | null = null;
+  /** ID del vídeo de YouTube que se está proyectando (para la miniatura). */
+  let youtubeActual: string | null = null;
 
   /** URL de la imagen (o página de PDF) que está en la pizarra ahora mismo. */
   let imagenActual: string | null = null;
@@ -308,31 +368,53 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   /** Estado previo del <video> al pasarse a grande (para devolverlo igual). */
   let controlesPrevios = false;
 
-  /** TABLERO INTELIGENTE: escritura con el ratón o el dedo sobre la pizarra. */
-  let lienzoDibujo: HTMLCanvasElement | null = null;
-  let barraDibujo: HTMLDivElement | null = null;
-  let modoDibujo = false;
-  /** El lienzo está aportando contenido a la pizarra (sirve para abrirlo en grande). */
-  let hayDibujo = false;
-  let colorDibujo = "#111827";
-  /**
-   * Pizarra MULTI-HOJA: las hojas guardadas viven en lienzos fuera de la
-   * pantalla y la que se ve (`indiceHoja`) es el propio `lienzoDibujo`. Antes
-   * de cambiar de hoja se copia la visible dentro, así que no se pierde nada.
-   */
-  let hojas: HTMLCanvasElement[] = [];
-  let indiceHoja = 0;
-  /**
-   * Pasa un clic de PANTALLA a coordenadas del lienzo. Hace falta porque la
-   * pizarra se pega con una matriz de perspectiva (matrix3d): lo que devuelve
-   * getBoundingClientRect() es la caja del elemento, no el trapecio que se ve,
-   * y con eso solo el trazo saldría desviado.
-   */
-  let mapaPuntero: ((x: number, y: number) => { x: number; y: number }) | null = null;
+  // ── SINCRONIZACIÓN CON LA SALA ──────────────────────────────────────────
+  // El contenido de ESTE navegador (PDF convertido, galería…) no le sirve
+  // a nadie más: sus URL son `blob:` y solo existen aquí. Así que quien
+  // publica manda a la sala una COPIA en JPEG (data URL ≤1600 px) y los
+  // demás la pintan en su pizarra con la misma API que usarían si la
+  // hubieran subido ellos. `ultimoMensaje` recuerda lo que se ve ahora
+  // para poder reenviarlo cuando alguien nuevo entre a la clase.
+  let ultimoMensaje: MensajeTablero | null = null;
+  let mensajePendiente: MensajeTablero | null = null;
+  let temporizadorPublicacion: number | null = null;
+  /** Cuenta las publicaciones: una conversión que llega tarde se descarta. */
+  let ordenPublicacion = 0;
+
+  /** Calma entre publicaciones: pasar cinco diapositivas seguidas no manda cinco JPEGs. */
+  const PUBLICACION_MS = 250;
+
+  // COMPARTIR PANTALLA → LA SALA. Un MediaStream no viaja por socket, así
+  // que mientras se comparte se fotografía el <video> cada cierto tiempo y
+  // el fotograma (JPEG ~1280 px) se manda como una imagen más del tablero:
+  // los que entren a la clase lo ven con la misma API de siempre, con la
+  // pantalla en grande y hasta en la vista del presentador.
+  const INTERVALO_FOTOGRAMA_MS = 400;
+  const ANCHO_FOTOGRAMA = 1280;
+  const CALIDAD_FOTOGRAMA = 0.6;
+  let temporizadorFotogramas: number | null = null;
+  let lienzoFotograma: HTMLCanvasElement | null = null;
+
+  /** NOTAS DEL TABLERO: papel con <textarea> proyectado sobre la pizarra. */
+  let cajaNotas: HTMLDivElement | null = null;
+  let textoNotas: HTMLTextAreaElement | null = null;
+  let barraNotas: HTMLDivElement | null = null;
+  let modoNotas = false;
+  /** El papel de notas está visible sobre la pizarra (editando o con texto). */
+  let hayNotas = false;
+
+  // ── VISTA DEL PRESENTADOR ───────────────────────────────────────────────
+  // Pantallita fija abajo a la izquierda con lo que está en el tablero,
+  // solo visible mientras se está en el atril: el que presenta mira a la
+  // clase y, de reojo, a su diapositiva, sin tener que girarse.
+  let panelPresentador: HTMLDivElement | null = null;
+  let panelActivo = false;
+  /** Para no tocar el DOM en cada frame: solo si cambió lo que se muestra. */
+  let clavePanel = "";
   /**
    * Silueta de lo que queda enfrente de la pizarra (la persona), ya proyectada
    * a pantalla y reducida a su contorno. Se recalcula en `actualizar()` y se
-   * usa en los dos elementos HTML: iframe de YouTube y lienzo de escritura.
+   * usa en los dos elementos HTML: iframe de YouTube y papel de notas.
    */
   let siluetaPantalla: Punto[] | null = null;
 
@@ -424,6 +506,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   }
 
   function quitarYoutube(): void {
+    youtubeActual = null;
     if (reproductorYoutube) {
       try {
         reproductorYoutube.destroy();
@@ -444,6 +527,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
 
   function mostrarYoutube(idVideo: string): void {
     cambiarContenido();
+    youtubeActual = idVideo;
     if (pantalla) pantalla.isVisible = false;
 
     // El contenedor es el que se posiciona sobre el tablero (ver actualizar()).
@@ -469,7 +553,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
    * Pizarra proyectada: sus cuatro esquinas en pantalla y la matriz de
    * perspectiva que hace que el contenido se quede CLAVADO a la pizarra, igual
    * que si estuviera pintado en la pared. Lo comparten el iframe de YouTube y
-   * el lienzo del modo escritura, así que los dos caen sobre el mismo sitio.
+   * el papel de notas, así que los dos caen sobre el mismo sitio.
    */
   function proyectarPantalla(): RectPizarra | null {
     if (!pantalla) return null;
@@ -580,7 +664,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   // SILUETA DE LO QUE QUEDA ENFRENTE (la persona)
   //
   // El canvas de Babylon está debajo del HTML, así que el <iframe> de YouTube y
-  // el lienzo se pintan SIEMPRE encima de todo: al mirar de frente la cabeza
+  // el papel de notas se pintan SIEMPRE encima de todo: al mirar de frente la cabeza
   // quedaba tapada por el vídeo. La solución es recortar esos dos elementos con
   // la forma del cuerpo, de modo que por el agujero se ve el canvas (con la
   // persona) y alrededor el contenido pegado en la pizarra.
@@ -833,6 +917,9 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     const idVideo = extraerIdYoutube(url);
     if (!idVideo) return false;
     mostrarYoutube(idVideo);
+    // El enlace SÍ es universal: a la sala le basta con la URL, sin
+    // convertir nada (por eso este tipo de contenido pesa cero).
+    publicar({ tipo: "youtube", url });
     return true;
   }
 
@@ -870,6 +957,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
 
   /** Para de grabar la pantalla. Obligatorio: si no, el aviso de "compartiendo" se queda. */
   function detenerPantallaCompartida(): void {
+    detenerCapturaPantalla();
     if (flujoPantalla) {
       for (const pista of flujoPantalla.getTracks()) {
         pista.onended = null;
@@ -880,6 +968,48 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     if (videoElemento && videoElemento.srcObject) {
       videoElemento.pause();
       videoElemento.srcObject = null;
+    }
+  }
+
+  /**
+   * Fotografía el <video> de la pantalla y se la recuerda a la sala como
+   * una imagen más del tablero (aunque NO se pinta aquí: en LOCAL ya se ve
+   * el stream en vivo con su VideoTexture, y pintar el fotograma pasaría
+   * por cambiarContenido(), que DETIENE el propio compartir, y congelaría
+   * el vídeo a la cadencia de captura).
+   *
+   * `encolar` (250 ms, último-gana) hace de caída de red: si los fotogramas
+   * llegan pegados o la conexión va lenta, solo se emite el más fresco.
+   */
+  function iniciarCapturaPantalla(video: HTMLVideoElement): void {
+    detenerCapturaPantalla();
+    const lienzo = (lienzoFotograma ??= document.createElement("canvas"));
+    const ctx = lienzo.getContext("2d");
+    if (!ctx) return;
+
+    temporizadorFotogramas = window.setInterval(() => {
+      const ancho = video.videoWidth;
+      const alto = video.videoHeight;
+      if (!ancho || !alto || video.readyState < 2) return; // stream aún sin datos
+      const escala = Math.min(1, ANCHO_FOTOGRAMA / ancho);
+      lienzo.width = Math.max(1, Math.round(ancho * escala));
+      lienzo.height = Math.max(1, Math.round(alto * escala));
+      ctx.drawImage(video, 0, 0, lienzo.width, lienzo.height);
+
+      const fotograma = lienzo.toDataURL("image/jpeg", CALIDAD_FOTOGRAMA);
+      // Va por `encolar`, no por `publicar`: no invalida conversiones en
+      // vuelo (¿y si subo una diapositiva mientras comparto?). Sí se
+      // recuerda en `ultimoMensaje` para quien entre a la clase ahora:
+      // recibirá UN fotograma congelado y a los 400 ms ya lleva los vivos.
+      ultimoMensaje = { tipo: "imagen", imagen: fotograma };
+      encolar(ultimoMensaje);
+    }, INTERVALO_FOTOGRAMA_MS);
+  }
+
+  function detenerCapturaPantalla(): void {
+    if (temporizadorFotogramas !== null) {
+      clearInterval(temporizadorFotogramas);
+      temporizadorFotogramas = null;
     }
   }
 
@@ -897,15 +1027,89 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
    * captura de pantalla sobre la misma malla.
    */
   function cambiarContenido(): void {
-    salirDeModoDibujo();
-    ocultarLienzo();
+    salirDeModoNotas();
+    ocultarNotas();
     quitarYoutube();
     limpiarTextura();
     detenerPantallaCompartida();
     imagenActual = null;
   }
 
-  function mostrarImagen(urlImagen: string): void {
+  // -------------------------------------------------------------------------
+  // SINCRONIZACIÓN CON LA SALA (el tablero es del salón, no de uno solo)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Deja `mensaje` en cola para emitirlo con `PUBLICACION_MS` de calma:
+   * un puntero en ráfaga (varias diapositivas seguidas) solo interesa al
+   * otro lado en su último estado, no cada pulsación intermedia.
+   */
+  function encolar(mensaje: MensajeTablero): void {
+    if (!opciones.alPublicar) return;
+    mensajePendiente = mensaje;
+    if (temporizadorPublicacion !== null) clearTimeout(temporizadorPublicacion);
+    temporizadorPublicacion = window.setTimeout(() => {
+      temporizadorPublicacion = null;
+      const pendiente = mensajePendiente;
+      mensajePendiente = null;
+      if (pendiente) opciones.alPublicar?.(pendiente);
+    }, PUBLICACION_MS);
+  }
+
+  function publicar(mensaje: MensajeTablero): void {
+    ordenPublicacion++; // invalida cualquier conversión en vuelo anterior
+    ultimoMensaje = mensaje;
+    encolar(mensaje);
+  }
+
+  /**
+   * JPEG de tamaño acotado como data URL. Es EL paso que hace posible
+   * compartir: una URL `blob:` solo existe en el navegador que la creó,
+   * así que a la sala hay que mandarle píxeles, no un enlace.
+   * Ancho máx. 1600 px y calidad 0.8 → ~200-500 kB en base64, holgado
+   * para una pizarra vista a cualquier distancia.
+   */
+  async function imagenParaLaSala(url: string): Promise<string | null> {
+    try {
+      const imagen = new Image();
+      await new Promise<void>((resolver, rechazar) => {
+        imagen.onload = () => resolver();
+        imagen.onerror = () => rechazar(new Error("imagen ilegible"));
+        imagen.src = url;
+      });
+
+      const escala = Math.min(1, 1600 / Math.max(1, imagen.width));
+      const lienzo = document.createElement("canvas");
+      lienzo.width = Math.max(1, Math.round(imagen.width * escala));
+      lienzo.height = Math.max(1, Math.round(imagen.height * escala));
+      const ctx = lienzo.getContext("2d");
+      if (!ctx) return null;
+
+      // JPEG no tiene alfa: si no se rellena el fondo, lo transparente
+      // llegaría negro a la pizarra del otro.
+      ctx.fillStyle = "#ffffff";
+      ctx.fillRect(0, 0, lienzo.width, lienzo.height);
+      ctx.drawImage(imagen, 0, 0, lienzo.width, lienzo.height);
+      return lienzo.toDataURL("image/jpeg", 0.8);
+    } catch (error) {
+      console.warn("[tablero] No se pudo preparar la imagen para la sala:", error);
+      return null;
+    }
+  }
+
+  async function publicarImagen(url: string): Promise<void> {
+    const mia = ++ordenPublicacion;
+    const imagen = await imagenParaLaSala(url);
+    // Si mientras convertía se publicó otra cosa, esta queda obsoleta.
+    if (imagen && mia === ordenPublicacion) publicar({ tipo: "imagen", imagen });
+  }
+
+  /**
+   * Cuerpo común de las imágenes. Pintar y publicar van separados: lo
+   * recibido de la red pinta sin reenviar (evita el eco) y lo local pinta
+   * y manda una copia a la sala.
+   */
+  function pintarImagen(urlImagen: string): void {
     if (!pantalla || !material) return;
     cambiarContenido();
 
@@ -916,6 +1120,66 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     material.diffuseTexture = nuevaTextura;
     pantalla.isVisible = true;
     imagenActual = urlImagen;
+  }
+
+  function mostrarImagen(urlImagen: string): void {
+    pintarImagen(urlImagen);
+    if (urlImagen.startsWith("data:")) {
+      // Ya viene convertido (p. ej. de la sala): se recuerda sin
+      // reconvertir ni reenviar — quien lo publicó ya lo hizo.
+      ordenPublicacion++;
+      ultimoMensaje = { tipo: "imagen", imagen: urlImagen };
+      return;
+    }
+    void publicarImagen(urlImagen);
+  }
+
+  /**
+   * Única puerta de entrada de la red. Pinta lo que publicó otro sin
+   * volver a publicarlo (un eco aquí sería un bucle infinito entre los
+   * dos clientes) y lo recuerda en `ultimoMensaje` para que, si alguien
+   * más entra a la clase, se le pueda reenviar.
+   *
+   * Si la pizarra está en PANTALLA GRANDE (alguien siguiendo la
+   * presentación de lejos), la caja se mantiene al día: con imagen basta
+   * cambiar el src; con YouTube se reabre para que el iframe quede DENTRO;
+   * el limpiar ya cierra la caja por su cuenta.
+   */
+  function aplicarMensaje(mensaje: MensajeTablero): void {
+    ultimoMensaje = mensaje;
+    if (mensaje.tipo === "imagen") {
+      pintarImagen(mensaje.imagen);
+      if (cajaCompleta) {
+        if (cajaCompleta.querySelector("img")) {
+          refrescarPantallaCompleta();
+        } else {
+          cerrarPantallaCompleta();
+          abrirPantallaCompleta();
+        }
+      }
+    } else if (mensaje.tipo === "youtube") {
+      // Igual que `publicarYoutube` pero sin publicar: solo el ID validado.
+      const idVideo = extraerIdYoutube(mensaje.url);
+      if (!idVideo) return;
+      // El contenedor del vídeo nuevo se monta en <body>: si había
+      // pantalla en grande, se reabre después para que quede DENTRO.
+      const enGrande = cajaCompleta !== null;
+      if (enGrande) cerrarPantallaCompleta();
+      mostrarYoutube(idVideo);
+      if (enGrande) abrirPantallaCompleta();
+    } else if (mensaje.tipo === "limpiar") {
+      limpiarBase(); // ya cierra la pantalla en grande
+    }
+  }
+
+  /**
+   * Reenvía a la sala lo que se ve ahora (cuando alguien acaba de
+   * entrar). Va por `encolar`, no por `publicar`: no debe invalidar una
+   * conversión en vuelo —si acabo de subir algo nuevo, esa sigue siendo
+   * la más fresca.
+   */
+  function republicarContenido(): void {
+    if (ultimoMensaje) encolar(ultimoMensaje);
   }
 
   function mostrarVideo(urlVideo: string): void {
@@ -1004,6 +1268,9 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
       video.play().catch((error) => console.warn("No se pudo reproducir la pantalla:", error));
     });
 
+    // De aquí salen los fotogramas que ven los demás (ver iniciarCapturaPantalla).
+    iniciarCapturaPantalla(video);
+
     menuPublicar.style.display = "none";
     console.log("Compartiendo pantalla en el tablero.");
   }
@@ -1012,7 +1279,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   // PANTALLA EN GRANDE (clic sobre la pizarra de lejos)
   // -------------------------------------------------------------------------
   function hayContenido(): boolean {
-    return Boolean(contenedorYoutube || imagenActual || videoElemento || hayDibujo);
+    return Boolean(contenedorYoutube || imagenActual || videoElemento || hayNotas);
   }
 
   function pantallaCompletaAbierta(): boolean {
@@ -1041,8 +1308,8 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
         // (así estaba antes de abrir la pantalla en grande).
         videoElemento.remove();
       }
-      if (lienzoDibujo && lienzoDibujo.parentElement === zona) {
-        document.body.appendChild(lienzoDibujo); // vuelve a proyectarse sobre la pizarra
+      if (cajaNotas && cajaNotas.parentElement === zona) {
+        document.body.appendChild(cajaNotas); // vuelve a proyectarse sobre la pizarra
       }
     }
 
@@ -1084,8 +1351,8 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
       videoElemento.classList.add("tb-full-video");
       videoElemento.controls = true;
       zona.appendChild(videoElemento);
-    } else if (hayDibujo && lienzoDibujo) {
-      zona.appendChild(lienzoDibujo);
+    } else if (hayNotas && cajaNotas) {
+      zona.appendChild(cajaNotas);
     }
   }
 
@@ -1097,195 +1364,60 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   }
 
   // -------------------------------------------------------------------------
-  // TABLERO INTELIGENTE — escribir con el ratón o con el dedo
+  // NOTAS EN EL TABLERO — escribir con el teclado
   //
-  // Es un <canvas> pegado encima de la pizarra, proyectado con la MISMA
-  // matemática que el iframe de YouTube (proyectarPantalla), así que calza con la
-  // pizarra 3D a cualquier distancia y ángulo sin tocar Babylon. Va con Pointer
-  // Events, así que funciona igual con ratón y con dedo (tableta), y su
-  // resolución es fija y con la proporción REAL de la pizarra: al ampliarlo
-  // (pantalla en grande) los trazos no se deforman.
+  // Es un <textarea> sobre un papel blanco, proyectado con la MISMA
+  // matemática que el iframe de YouTube (proyectarPantalla), así que calza
+  // con la pizarra 3D a cualquier distancia y ángulo sin tocar Babylon.
+  // Sustituye al antiguo tablero de trazos con el ratón: aquí se ESCRIBE
+  // (como en un bloc de notas) y se descarga como archivo de texto (.txt).
   // -------------------------------------------------------------------------
 
-  function pintarFondoDelLienzo(): void {
-    if (!lienzoDibujo) return;
-    const ctx = lienzoDibujo.getContext("2d");
-    if (!ctx) return;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, lienzoDibujo.width, lienzoDibujo.height);
+  function borrarNotas(): void {
+    if (!textoNotas) return;
+    textoNotas.value = "";
+    // Si se estaba editando el papel se queda (en blanco); si no, se oculta.
+    hayNotas = modoNotas;
   }
 
-  // -------------------------------------------------------------------------
-  // HOJAS DE LA PIZARRA — pasar hojas y descargarlas
-  //
-  // La hoja que se está viendo es el propio `lienzoDibujo`; las demás viven en
-  // lienzos fuera de la pantalla. Antes de moverse se copia la visible dentro,
-  // así que nada de lo escrito se pierde. Cualquier mapa reutiliza esto a través
-  // de la barra: la lógica no está repartida por el código del mapa.
-  // -------------------------------------------------------------------------
-
-  function nuevaHojaEnBlanco(): HTMLCanvasElement {
-    const hoja = document.createElement("canvas");
-    hoja.width = lienzoDibujo?.width ?? 2048;
-    hoja.height = lienzoDibujo?.height ?? 794;
-    const ctx = hoja.getContext("2d");
-    if (ctx) {
-      ctx.fillStyle = "#ffffff";
-      ctx.fillRect(0, 0, hoja.width, hoja.height);
+  /**
+   * Descarga las notas como archivo de texto (bloc de notas), no como PDF:
+   * el contenido del <textarea> tal cual, con BOM UTF-8 para que Windows
+   * lo abra con acentos y ñ sin líos de codificación.
+   */
+  function descargarNotas(): void {
+    const texto = textoNotas?.value ?? "";
+    if (!texto.trim()) {
+      alert("Todavía no hay notas que descargar.");
+      return;
     }
-    return hoja;
-  }
-
-  function guardarHojaActual(): void {
-    const visible = lienzoDibujo;
-    if (!visible) return;
-    const destino = hojas[indiceHoja] ?? (hojas[indiceHoja] = nuevaHojaEnBlanco());
-    const ctx = destino.getContext("2d");
-    if (!ctx) return;
-    ctx.clearRect(0, 0, destino.width, destino.height);
-    ctx.drawImage(visible, 0, 0);
-  }
-
-  function pintarHojaEnElLienzo(): void {
-    const visible = lienzoDibujo;
-    if (!visible) return;
-    const ctx = visible.getContext("2d");
-    if (!ctx) return;
-    ctx.fillStyle = "#ffffff";
-    ctx.fillRect(0, 0, visible.width, visible.height);
-    const hoja = hojas[indiceHoja];
-    if (hoja) ctx.drawImage(hoja, 0, 0);
-  }
-
-  /** La hoja visible todavía no está copiada en `hojas`: cuenta también. */
-  function totalDeHojas(): number {
-    return Math.max(hojas.length, indiceHoja + 1);
-  }
-
-  function irAHoja(nueva: number): void {
-    if (!lienzoDibujo) return;
-    if (nueva < 0 || nueva >= totalDeHojas() || nueva === indiceHoja) return;
-    guardarHojaActual();
-    indiceHoja = nueva;
-    if (!hojas[indiceHoja]) hojas[indiceHoja] = nuevaHojaEnBlanco();
-    pintarHojaEnElLienzo();
-    hayDibujo = true;
-    refrescarContadorDeHojas();
-  }
-
-  function hojaNueva(): void {
-    if (!lienzoDibujo) return;
-    guardarHojaActual();
-    hojas.push(nuevaHojaEnBlanco());
-    indiceHoja = hojas.length - 1;
-    pintarHojaEnElLienzo();
-    hayDibujo = true;
-    refrescarContadorDeHojas();
-  }
-
-  function refrescarContadorDeHojas(): void {
-    const contador = barraDibujo?.querySelector<HTMLElement>("#tdHoja");
-    if (contador) contador.textContent = `${indiceHoja + 1} / ${totalDeHojas()}`;
-
-    const anterior = barraDibujo?.querySelector<HTMLButtonElement>('[data-hoja="anterior"]');
-    const siguiente = barraDibujo?.querySelector<HTMLButtonElement>('[data-hoja="siguiente"]');
-    if (anterior) anterior.disabled = indiceHoja <= 0;
-    if (siguiente) siguiente.disabled = indiceHoja >= totalDeHojas() - 1;
-  }
-
-  /** Todas las hojas en lienzos, con la visible refrescada, listas para el PDF. */
-  function hojasListasParaDescargar(): HTMLCanvasElement[] {
-    guardarHojaActual();
-    const lienzos: HTMLCanvasElement[] = [];
-    for (let i = 0; i < totalDeHojas(); i++) {
-      if (!hojas[i]) hojas[i] = nuevaHojaEnBlanco();
-      lienzos.push(hojas[i]);
-    }
-    return lienzos;
-  }
-
-  function descargarHojas(): void {
     try {
-      const paginas = paginasDesdeLienzos(hojasListasParaDescargar());
-      descargarPdf("Pizarra de clase", paginas);
+      const blob = new Blob(["\ufeff", texto], { type: "text/plain;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const enlace = document.createElement("a");
+      enlace.href = url;
+      enlace.download = "Notas del tablero.txt";
+      document.body.appendChild(enlace);
+      enlace.click();
+      enlace.remove();
+      // Se revoca pasados unos ms: revocar antes cancela la descarga en Firefox.
+      window.setTimeout(() => URL.revokeObjectURL(url), 2000);
     } catch (error) {
-      console.error("No se pudo generar el PDF de la pizarra:", error);
-      alert("No se pudo descargar la pizarra. Inténtalo otra vez.");
+      console.error("No se pudieron descargar las notas:", error);
+      alert("No se pudieron descargar las notas. Inténtalo otra vez.");
     }
   }
 
-  /** Une un trazo continuo entre el punto anterior y el nuevo. */
-  function conectarTrazos(lienzo: HTMLCanvasElement): void {
-    let pintando = false;
-    let ultimo: { x: number; y: number } | null = null;
 
-    const aPixeles = (evento: PointerEvent): { x: number; y: number } => {
-      // Con la matriz de perspectiva, la caja que devuelve getBoundingClientRect
-      // es el rectángulo del elemento y NO el trapecio que se ve en pantalla:
-      // con ella solo el trazo saldría desviado. Se usa el mapa inverso
-      // (pantalla → lienzo) calculado en actualizarPosicionLienzo.
-      if (mapaPuntero) return mapaPuntero(evento.clientX, evento.clientY);
-
-      // Respaldo (pantalla en grande), donde no hay perspectiva que deshacer.
-      const rect = lienzo.getBoundingClientRect();
-      return {
-        x: ((evento.clientX - rect.left) / Math.max(1, rect.width)) * lienzo.width,
-        y: ((evento.clientY - rect.top) / Math.max(1, rect.height)) * lienzo.height,
-      };
-    };
-
-    const trazar = (evento: PointerEvent): void => {
-      const ctx = lienzo.getContext("2d");
-      if (!ctx) return;
-      const punto = aPixeles(evento);
-      ctx.strokeStyle = colorDibujo;
-      ctx.lineWidth = Math.max(6, lienzo.width / 160);
-      ctx.lineCap = "round";
-      ctx.lineJoin = "round";
-      ctx.beginPath();
-      ctx.moveTo(ultimo ? ultimo.x : punto.x, ultimo ? ultimo.y : punto.y);
-      ctx.lineTo(punto.x, punto.y);
-      ctx.stroke();
-      ultimo = punto;
-      hayDibujo = true;
-    };
-
-    lienzo.addEventListener("pointerdown", (evento) => {
-      if (!modoDibujo) return;
-      evento.preventDefault();
-      pintando = true;
-      ultimo = null;
-      // Captura el puntero: si el dedo se sale de la pizarra el trazo no se corta.
-      lienzo.setPointerCapture(evento.pointerId);
-      trazar(evento);
-    });
-
-    lienzo.addEventListener("pointermove", (evento) => {
-      if (!modoDibujo || !pintando) return;
-      evento.preventDefault();
-      trazar(evento);
-    });
-
-    const soltar = (evento: PointerEvent): void => {
-      pintando = false;
-      ultimo = null;
-      if (lienzo.hasPointerCapture(evento.pointerId)) {
-        lienzo.releasePointerCapture(evento.pointerId);
-      }
-    };
-    lienzo.addEventListener("pointerup", soltar);
-    lienzo.addEventListener("pointercancel", soltar);
-  }
-
-  function asegurarLienzo(): HTMLCanvasElement | null {
+  function asegurarNotas(): HTMLDivElement | null {
     if (!pantalla) return null;
 
-    if (!lienzoDibujo) {
+    if (!cajaNotas) {
       pantalla.computeWorldMatrix(true);
       const mundo = pantalla.getWorldMatrix();
       const caja = pantalla.getBoundingInfo().boundingBox;
       // Tamaño local de la pizarra llevado al mundo (rotación y escalado de los
-      // padres incluidos): de ahí sale la proporción real del lienzo.
+      // padres incluidos): de ahí sale la proporción real del papel.
       const anchoMundo = BABYLON.Vector3.TransformNormal(
         new BABYLON.Vector3(caja.maximum.x - caja.minimum.x, 0, 0),
         mundo
@@ -1295,205 +1427,165 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
         mundo
       ).length();
       const proporcion = anchoMundo > 0 && altoMundo > 0 ? anchoMundo / altoMundo : 2;
-      const ladoLargo = 2048;
 
-      lienzoDibujo = document.createElement("canvas");
-      lienzoDibujo.className = "td-lienzo";
-      lienzoDibujo.width = ladoLargo;
-      lienzoDibujo.height = Math.max(256, Math.round(ladoLargo / proporcion));
-      document.body.appendChild(lienzoDibujo);
-      pintarFondoDelLienzo();
-      conectarTrazos(lienzoDibujo);
-      // Pizarra recién creada: se empieza con UNA sola hoja en blanco.
-      hojas = [];
-      indiceHoja = 0;
+      cajaNotas = document.createElement("div");
+      cajaNotas.className = "td-notas";
+      // Tamaño provisional: la posición y el tamaño REALES los pone cada
+      // frame actualizarPosicionNotas(), igual que hacía el lienzo.
+      cajaNotas.style.width = "1024px";
+      cajaNotas.style.height = `${Math.max(256, Math.round(1024 / proporcion))}px`;
+
+      textoNotas = document.createElement("textarea");
+      textoNotas.placeholder = "Escribe aquí las notas de la clase…";
+      textoNotas.spellcheck = false;
+      cajaNotas.appendChild(textoNotas);
+      document.body.appendChild(cajaNotas);
     }
 
-    lienzoDibujo.classList.add("td-activo");
-    hayDibujo = true;
-    return lienzoDibujo;
+    cajaNotas.classList.add("td-activo");
+    hayNotas = true;
+    return cajaNotas;
   }
 
-  function ocultarLienzo(): void {
-    hayDibujo = false;
-    if (!lienzoDibujo) return;
-    lienzoDibujo.classList.remove("td-activo");
-    lienzoDibujo.style.display = "none";
+  function ocultarNotas(): void {
+    hayNotas = false;
+    if (!cajaNotas) return;
+    cajaNotas.classList.remove("td-activo");
+    cajaNotas.style.display = "none";
   }
 
-  function actualizarPosicionLienzo(): void {
-    const lienzo = lienzoDibujo;
-    if (!lienzo || !hayDibujo) return;
+  /**
+   * La tipografía se dimensiona con la altura PROYECTADA del papel: lejos la
+   * letra es pequeña y de cerca grande, como en la pizarra de verdad, en vez
+   * de quedar clavada en px (con la cámara en movimiento parecería que baila).
+   */
+  function ajustarFuenteNotas(altoPx: number): void {
+    if (!textoNotas) return;
+    textoNotas.style.fontSize = `${Math.max(11, Math.round(altoPx * 0.042))}px`;
+  }
+
+  function actualizarPosicionNotas(): void {
+    const caja = cajaNotas;
+    if (!caja || !hayNotas) return;
 
     // Pantalla en grande: ocupa toda la zona y no hay perspectiva que deshacer.
     if (modoCompleto) {
-      lienzo.style.display = "block";
-      lienzo.style.left = "0px";
-      lienzo.style.top = "0px";
-      lienzo.style.width = "100%";
-      lienzo.style.height = "100%";
-      lienzo.style.transform = "none";
-      mapaPuntero = null;
-      recortarConSilueta(lienzo, cajaPantallaCompleta(lienzo));
+      caja.style.display = "block";
+      caja.style.left = "0px";
+      caja.style.top = "0px";
+      caja.style.width = "100%";
+      caja.style.height = "100%";
+      caja.style.transform = "none";
+      ajustarFuenteNotas(window.innerHeight);
+      recortarConSilueta(caja, cajaPantallaCompleta(caja));
       return;
     }
 
     const rect = proyectarPantalla();
     if (!rect || !rect.visible) {
-      lienzo.style.display = "none";
-      mapaPuntero = null;
-      recortarConSilueta(lienzo, null);
+      caja.style.display = "none";
+      recortarConSilueta(caja, null);
       return;
     }
 
-    lienzo.style.display = "block";
-    lienzo.style.left = `${rect.x}px`;
-    lienzo.style.top = `${rect.y}px`;
-    lienzo.style.width = `${rect.ancho}px`;
-    lienzo.style.height = `${rect.alto}px`;
+    caja.style.display = "block";
+    caja.style.left = `${rect.x}px`;
+    caja.style.top = `${rect.y}px`;
+    caja.style.width = `${rect.ancho}px`;
+    caja.style.height = `${rect.alto}px`;
 
-    // La pizarra se pega en perspectiva, así que para saber en qué punto del
-    // lienzo acaba el trazo hay que deshacer la matriz: sin esto, al escribir de
-    // lado la línea saldría corrida respecto al puntero.
-    const inversa = rect.homografia ? invertir(rect.homografia) : null;
-    if (rect.homografia && inversa) {
-      lienzo.style.transformOrigin = "0 0";
-      lienzo.style.transform = matriz3d(rect.homografia);
-      const { x: origenX, y: origenY, ancho, alto } = rect;
-      mapaPuntero = (clientX, clientY) => {
-        const local = aplicar(inversa, { x: clientX - origenX, y: clientY - origenY });
-        return {
-          x: (local.x / Math.max(1, ancho)) * lienzo.width,
-          y: (local.y / Math.max(1, alto)) * lienzo.height,
-        };
-      };
+    // El papel se pega en perspectiva con la misma homografía del vídeo:
+    // así el texto queda CLAVADO en la pizarra a cualquier ángulo.
+    if (rect.homografia) {
+      caja.style.transformOrigin = "0 0";
+      caja.style.transform = matriz3d(rect.homografia);
     } else {
-      lienzo.style.transform = "none";
-      mapaPuntero = null;
+      caja.style.transform = "none";
     }
+    ajustarFuenteNotas(rect.alto);
 
     // Hueco con la persona: lo escrito tiene que quedar DETRÁS de ella igual
-    // que el vídeo (el lienzo también es HTML y se pinta sobre el canvas).
-    recortarConSilueta(lienzo, rect);
+    // que el vídeo (el papel también es HTML y se pinta sobre el canvas).
+    recortarConSilueta(caja, rect);
   }
 
-  function asegurarBarraDibujo(): HTMLDivElement {
-    if (barraDibujo) return barraDibujo;
-
-    const colores: Array<[string, string]> = [
-      ["#111827", "Tinta negra"],
-      ["#2563EB", "Tinta azul"],
-      ["#EF4444", "Tinta roja"],
-      ["#16A34A", "Tinta verde"],
-      ["#F2A93B", "Tinta ámbar"],
-      ["#FFFFFF", "Borrador"],
-    ];
+  function asegurarBarraNotas(): HTMLDivElement {
+    if (barraNotas) return barraNotas;
 
     const caja = document.createElement("div");
     caja.className = "td-barra";
     caja.innerHTML =
-      '<span style="font-size:13px;color:#9aa8c7">Tablero inteligente</span>' +
-      colores
-        .map(
-          ([color, titulo]) =>
-            `<button type="button" class="td-color${color === colorDibujo ? " td-actual" : ""}"` +
-            ` data-color="${color}" title="${titulo}" style="background:${color}"></button>`
-        )
-        .join("") +
-      // Pasar hojas: anterior, siguiente y hoja nueva (tres botones) + contador.
-      '<span class="td-separador"></span>' +
-      '<button type="button" class="td-hoja" data-hoja="anterior" title="Hoja anterior">' +
-      '<i class="fa-solid fa-angles-left"></i></button>' +
-      '<span class="td-pagina" id="tdHoja">1 / 1</span>' +
-      '<button type="button" class="td-hoja" data-hoja="siguiente" title="Hoja siguiente">' +
-      '<i class="fa-solid fa-angles-right"></i></button>' +
-      '<button type="button" class="td-hoja" data-hoja="nueva" title="Hoja nueva">' +
-      '<i class="fa-solid fa-plus"></i></button>' +
-      // Descargar: un PDF con todas las hojas tal y como se ven en la pizarra.
-      '<span class="td-separador"></span>' +
-      '<button type="button" class="td-accion td-suave" data-accion="descargar" ' +
-      'title="Descargar todas las hojas en PDF"><i class="fa-solid fa-file-pdf"></i> Descargar PDF</button>' +
-      '<button type="button" class="td-accion" data-accion="limpiar" ' +
-      'title="Borrar lo escrito en esta hoja"><i class="fa-solid fa-trash"></i> Limpiar</button>' +
-      '<button type="button" class="td-accion" data-accion="listo"><i class="fa-solid fa-check"></i> Listo</button>';
+      '<span style="font-size:13px;color:#9aa8c7">Notas del tablero</span>' +
+      '<button type="button" class="td-accion" data-accion="descargar" ' +
+      'title="Descargar las notas como archivo de texto">' +
+      '<i class="fa-solid fa-download"></i> Descargar .txt</button>' +
+      '<button type="button" class="td-accion td-suave" data-accion="limpiar" ' +
+      'title="Borrar todo lo escrito"><i class="fa-solid fa-trash"></i> Limpiar</button>' +
+      '<button type="button" class="td-accion" data-accion="listo">' +
+      '<i class="fa-solid fa-check"></i> Listo</button>';
     document.body.appendChild(caja);
-    barraDibujo = caja;
-
-    caja.querySelectorAll<HTMLButtonElement>("[data-hoja]").forEach((boton) => {
-      boton.addEventListener("click", () => {
-        const accion = boton.dataset.hoja;
-        if (accion === "anterior") irAHoja(indiceHoja - 1);
-        else if (accion === "siguiente") irAHoja(indiceHoja + 1);
-        else if (accion === "nueva") hojaNueva();
-      });
-    });
+    barraNotas = caja;
 
     caja
       .querySelector<HTMLButtonElement>('[data-accion="descargar"]')!
-      .addEventListener("click", descargarHojas);
-
-    caja.querySelectorAll<HTMLButtonElement>(".td-color").forEach((boton) => {
-      boton.addEventListener("click", () => {
-        colorDibujo = boton.dataset.color ?? "#111827";
-        caja.querySelectorAll(".td-color").forEach((otro) => otro.classList.remove("td-actual"));
-        boton.classList.add("td-actual");
-      });
-    });
+      .addEventListener("click", descargarNotas);
 
     caja
       .querySelector<HTMLButtonElement>('[data-accion="limpiar"]')!
-      .addEventListener("click", () => {
-        pintarFondoDelLienzo();
-        hayDibujo = true; // la pizarra sigue ahí, solo que en blanco
-      });
+      .addEventListener("click", borrarNotas);
 
     caja
       .querySelector<HTMLButtonElement>('[data-accion="listo"]')!
-      .addEventListener("click", salirDeModoDibujo);
+      .addEventListener("click", salirDeModoNotas);
 
-    refrescarContadorDeHojas();
     return caja;
   }
 
-  function salirDeModoDibujo(): void {
-    if (!modoDibujo) return;
-    modoDibujo = false;
-    // El trazo se queda en la pizarra: solo se deja de escribir.
-    lienzoDibujo?.classList.remove("td-activo");
-    barraDibujo?.classList.remove("td-visible");
+  function salirDeModoNotas(): void {
+    if (!modoNotas) return;
+    modoNotas = false;
+    // Lo escrito se queda en el papel: solo se deja de escribir.
+    textoNotas?.blur();
+    cajaNotas?.classList.remove("td-activo");
+    barraNotas?.classList.remove("td-visible");
+    // Papel vacío tras "Listo": no tiene sentido pintar un blanco en la pizarra.
+    hayNotas = Boolean(textoNotas?.value.trim());
   }
 
-  function entrarEnModoDibujo(): void {
+  function entrarEnModoNotas(): void {
     if (document.pointerLockElement) document.exitPointerLock();
     cerrarPantallaCompleta();
-    // La pizarra queda SOLO para escribir: vídeo, imagen o YouTube se retiran
+    // El papel queda SOLO para escribir: vídeo, imagen o YouTube se retiran
     // (es lo mismo que pasa al publicar cualquier otra cosa).
     cambiarContenido();
 
-    const lienzo = asegurarLienzo();
-    if (!lienzo) return;
+    const caja = asegurarNotas();
+    if (!caja) return;
 
-    modoDibujo = true;
+    modoNotas = true;
     // Con la pizarra visible y sin textura el material sale en blanco: pizarra nueva.
     if (pantalla) pantalla.isVisible = true;
-    actualizarPosicionLienzo();
-    asegurarBarraDibujo().classList.add("td-visible");
-    refrescarContadorDeHojas();
+    actualizarPosicionNotas();
+    asegurarBarraNotas().classList.add("td-visible");
+    textoNotas?.focus();
   }
 
-  function limpiar(): void {
+  /** Cuerpo del borrado, común a "limpiar" local y a lo que manda la sala. */
+  function limpiarBase(): void {
     cerrarPantallaCompleta();
-    cambiarContenido();
-    pintarFondoDelLienzo();
-    // La pizarra entera: se olvidan TODAS las hojas y se vuelve a la primera.
-    hojas = [];
-    indiceHoja = 0;
-    refrescarContadorDeHojas();
+    cambiarContenido(); // retira todo y oculta el papel de notas
+    borrarNotas(); // las notas también: limpiar es limpiar
     for (const url of diapositivas) URL.revokeObjectURL(url);
     diapositivas = [];
     indiceDiapositiva = 0;
     videoElemento = null;
     if (pantalla) pantalla.isVisible = false;
+  }
+
+  function limpiar(): void {
+    limpiarBase();
+    // La sala entera se entera: si uno limpia, la pizarra se limpia para todos.
+    publicar({ tipo: "limpiar" });
   }
 
   function cambiarDiapositiva(direccion: 1 | -1): void {
@@ -1508,6 +1600,129 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     else videoElemento.pause();
   }
 
+  // -------------------------------------------------------------------------
+  // VISTA DEL PRESENTADOR — la pantallita de quien está en el atril
+  //
+  // Mientras se presenta, la pizarra queda a las espaldas: sin esta vista hay
+  // que girarse (y dejar de mirar a la clase) para comprobar qué se está
+  // mostrando. El panel repite aquí lo que hay en la pizarra —imagen, la
+  // miniatura de YouTube, el texto de las notas o un aviso de vídeo— y solo
+  // se ve mientras se está en el atril (vistaPresentador(true)).
+  //
+  // Además ES LA PUERTA DE ESCRITURA: para escribir en las notas se clica
+  // AQUÍ (no hay que girarse y dar click al tablero grande de atrás); el
+  // clic pone el modo notas y el foco en el papel, y mientras se escribe la
+  // pantallita muestra el texto en vivo.
+  // -------------------------------------------------------------------------
+
+  function vistaPresentador(activa: boolean): void {
+    if (activa === panelActivo) return;
+    panelActivo = activa;
+    clavePanel = ""; // al activarse hay que repintar aunque no haya cambiado nada
+    if (activa) {
+      asegurarPanelPresentador();
+      if (panelPresentador) {
+        panelPresentador.style.display = "block";
+        refrescarVistaPresentador();
+      }
+    } else if (panelPresentador) {
+      panelPresentador.style.display = "none";
+    }
+  }
+
+  function asegurarPanelPresentador(): void {
+    if (panelPresentador) return;
+    const panel = document.createElement("div");
+    panel.className = "tb-mini";
+    panel.title = "Clic para escribir en el tablero";
+    panel.innerHTML =
+      '<div class="tb-mini-titulo">Vista del tablero' +
+      '<span class="tb-mini-escribir" title="Escribir en el tablero">&#9998;</span></div>' +
+      '<div class="tb-mini-zona"><span class="tb-mini-vacio">Sin contenido en el tablero</span></div>';
+    // CLIC EN LA VISTA → ESCRIBIR. Es el mismo camino que el botón "Notas en
+    // el tablero" del menú Publicar: cierra lo que esté abierto y enfoca el
+    // papel proyectado. Si ya se está escribiendo, el clic solo recoloca el
+    // cursor en el texto (aquí no se pierde de vista lo que se teclea: la
+    // propia pantallita lo pinta en vivo).
+    panel.addEventListener("click", () => {
+      if (!modoNotas) {
+        cerrarMenu();
+        entrarEnModoNotas();
+      } else {
+        textoNotas?.focus();
+      }
+    });
+    document.body.appendChild(panel);
+    panelPresentador = panel;
+  }
+
+  /**
+   * Refresca la pantallita solo cuando cambia lo que se muestra: cada frame
+   * se compara una cadena (barata) y el DOM solo se toca con la clave nueva,
+   * para que mirar a la clase no cueste ni un milisegundo de más.
+   */
+  function refrescarVistaPresentador(): void {
+    if (!panelActivo || !panelPresentador) return;
+
+    // Se captura el estado AHORA: el pintar es síncrono, así que no puede cambiar.
+    const urlImagen = imagenActual;
+    const idYoutube = youtubeActual;
+    const notasVisibles = hayNotas;
+    const notas = textoNotas?.value ?? "";
+
+    let clave: string;
+    let pintar: (zona: HTMLElement) => void;
+
+    if (urlImagen) {
+      clave = `imagen|${urlImagen}`;
+      pintar = (zona) => {
+        const img = document.createElement("img");
+        img.alt = "Contenido del tablero";
+        img.src = urlImagen;
+        zona.replaceChildren(img);
+      };
+    } else if (idYoutube) {
+      clave = `youtube|${idYoutube}`;
+      pintar = (zona) => {
+        const img = document.createElement("img");
+        img.alt = "Vídeo de YouTube";
+        // La miniatura del propio vídeo: sirve aunque el iframe real esté
+        // tapado o en otra pestaña, y no duplica el reproductor.
+        img.src = `https://img.youtube.com/vi/${idYoutube}/hqdefault.jpg`;
+        zona.replaceChildren(img);
+      };
+    } else if (notasVisibles) {
+      clave = `notas|${notas}`;
+      pintar = (zona) => {
+        const pre = document.createElement("pre");
+        pre.className = "tb-mini-texto";
+        pre.textContent = notas;
+        zona.replaceChildren(pre);
+      };
+    } else if (videoElemento) {
+      clave = "video";
+      pintar = (zona) => {
+        const aviso = document.createElement("span");
+        aviso.className = "tb-mini-vacio";
+        aviso.textContent = "Vídeo o pantalla compartida en reproducción";
+        zona.replaceChildren(aviso);
+      };
+    } else {
+      clave = "vacio";
+      pintar = (zona) => {
+        const aviso = document.createElement("span");
+        aviso.className = "tb-mini-vacio";
+        aviso.textContent = "Sin contenido en el tablero";
+        zona.replaceChildren(aviso);
+      };
+    }
+
+    if (clave === clavePanel) return;
+    clavePanel = clave;
+    const zona = panelPresentador.querySelector<HTMLElement>(".tb-mini-zona");
+    if (zona) pintar(zona);
+  }
+
   function actualizar(silueta?: readonly PuntoMundo[] | null): void {
     // La textura de vídeo no avanza sola: Babylon solo la actualiza cuando llegan
     // eventos (canplay/seeked/paused). Sin este refresco a mano el tablero se
@@ -1518,12 +1733,13 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     // lo que se proyecta como TEXTURA ya lo tapa el motor 3D por sí solo (ahí la
     // persona queda por delante sin que haga falta recortar nada).
     const hayContenidoHtml =
-      hayDibujo || Boolean(contenedorYoutube && contenedorYoutube.style.display !== "none");
+      hayNotas || Boolean(contenedorYoutube && contenedorYoutube.style.display !== "none");
     siluetaPantalla = hayContenidoHtml && silueta && silueta.length > 5 ? proyectarSilueta(silueta) : null;
 
     actualizarPosicionYoutube();
-    actualizarPosicionLienzo();
+    actualizarPosicionNotas();
     refrescarPantallaCompleta();
+    refrescarVistaPresentador();
   }
 
   // -------------------------------------------------------------------------
@@ -1533,8 +1749,8 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   function abrirMenu(): void {
     // Con la pantalla en grande no tiene sentido el menú: se cierra antes.
     cerrarPantallaCompleta();
-    // Tampoco se escribe mientras se publica otra cosa (el trazo se queda).
-    salirDeModoDibujo();
+    // Tampoco se escribe mientras se publica otra cosa (lo escrito se queda).
+    salirDeModoNotas();
     // Mientras el ratón está bloqueado ningún botón recibe clics (es el mismo motivo
     // por el que 🔊 "a veces no funcionaba"): se libera al abrir el menú.
     if (document.pointerLockElement) document.exitPointerLock();
@@ -1553,10 +1769,10 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   menuPublicar.querySelector("#btnSubirImagenes")!.addEventListener("click", () => inputImagenes.click());
   menuPublicar.querySelector("#btnSubirVideo")!.addEventListener("click", () => inputVideo.click());
   menuPublicar.querySelector("#btnCerrarMenu")!.addEventListener("click", cerrarMenu);
-  // Tablero inteligente: se cierra el menú y se empieza a escribir en la pizarra.
-  menuPublicar.querySelector("#btnDibujar")!.addEventListener("click", () => {
+  // Notas en el tablero: se cierra el menú y se empieza a escribir con el teclado.
+  menuPublicar.querySelector("#btnNotas")!.addEventListener("click", () => {
     cerrarMenu();
-    entrarEnModoDibujo();
+    entrarEnModoNotas();
   });
   menuPublicar
     .querySelector("#btnLimpiarTablero")!
@@ -1577,6 +1793,27 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     }
     cerrarMenu();
   });
+
+  // -------------------------------------------------------------------------
+  // MENÚ SEGÚN EL ROL — el tablero es del SALÓN y lo comparten todos, así que
+  // lo que se puede subir se filtra aquí: docente y admin publican de todo;
+  // estudiante e invitado solo diapositivas (PDF) y notas de la pizarra, que
+  // es lo que se les permite poner en común. (El rol no cambia dentro de una
+  // partida, por eso se aplica una sola vez al crear el tablero.)
+  // -------------------------------------------------------------------------
+  const rolTablero = opciones.rol();
+  if (rolTablero !== "docente" && rolTablero !== "admin") {
+    for (const selector of [
+      "#btnSubirImagenes",
+      "#btnSubirVideo",
+      "#btnYoutube",
+      "#btnCompartirPantalla",
+      "#btnLimpiarTablero",
+    ]) {
+      const boton = menuPublicar.querySelector<HTMLElement>(selector);
+      if (boton) boton.style.display = "none";
+    }
+  }
 
   inputPdf.addEventListener("change", async () => {
     const archivo = inputPdf.files?.[0];
@@ -1623,7 +1860,17 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
 
   function destruir(): void {
     cerrarPantallaCompleta();
-    limpiar(); // deja el tablero en blanco, para el vídeo y para la captura
+    // `limpiarBase`, no `limpiar`: salir NO debe avisar a la sala. La
+    // pizarra compartida es del salón —quien se va no la borra para los
+    // que siguen presentando— y el tablero local acaba igual de vacío.
+    limpiarBase();
+    detenerCapturaPantalla(); // por si acaso: limpiarBase ya lo hace al pasar por cambiarContenido
+    if (temporizadorPublicacion !== null) {
+      clearTimeout(temporizadorPublicacion);
+      temporizadorPublicacion = null;
+    }
+    mensajePendiente = null;
+    ultimoMensaje = null;
     menuPublicar.remove();
     cartelCargando.remove();
     inputPdf.remove();
@@ -1631,17 +1878,22 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     inputVideo.remove();
     estiloYoutube.remove();
     estiloCompleto.remove();
-    estiloDibujo.remove();
-    barraDibujo?.remove();
-    lienzoDibujo?.remove();
-    barraDibujo = null;
-    lienzoDibujo = null;
-    hojas = [];
-    indiceHoja = 0;
-    mapaPuntero = null;
+    estiloNotas.remove();
+    estiloMini.remove();
+    barraNotas?.remove();
+    cajaNotas?.remove();
+    panelPresentador?.remove();
+    barraNotas = null;
+    cajaNotas = null;
+    textoNotas = null;
+    panelPresentador = null;
+    panelActivo = false;
+    clavePanel = "";
     siluetaPantalla = null;
-    hayDibujo = false;
-    modoDibujo = false;
+    hayNotas = false;
+    modoNotas = false;
+    youtubeActual = null;
+    imagenActual = null;
     // YouTube deja el script cargado a propósito: reutilizarlo al volver a entrar
     // evita pedirlo otra vez y su callback global sigue siendo válido.
   }
@@ -1658,12 +1910,15 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     alternarPausa,
     limpiar,
     hayContenido,
+    aplicarMensaje,
+    republicarContenido,
     abrirPantallaCompleta,
     cerrarPantallaCompleta,
     pantallaCompletaAbierta,
-    escribirEnElTablero: entrarEnModoDibujo,
-    terminarDeEscribir: salirDeModoDibujo,
-    dibujoAbierto: () => modoDibujo,
+    escribirEnElTablero: entrarEnModoNotas,
+    terminarDeEscribir: salirDeModoNotas,
+    dibujoAbierto: () => modoNotas,
+    vistaPresentador,
     refrescarVolumen,
     actualizar,
     destruir,

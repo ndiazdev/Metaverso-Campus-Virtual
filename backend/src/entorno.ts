@@ -27,4 +27,5 @@ export const ENTORNO = {
 
   /** Orígenes permitidos para el frontend (cors). */
   ORIGENES: process.env.CORS_ORIGENES || "*",
+  JWT_SECRET: process.env.JWT_SECRET || "campus_metaverso_secret",
 };

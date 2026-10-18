@@ -1,8 +1,8 @@
-import "../assets/style.css";
+﻿import "../assets/style.css";
 import { inyectarTema as montarTema } from "../state/preferencias";
 
 // El tema (claro/oscuro) y el idioma se aplican apenas carga la
-// página, antes de que se pinte el login o el metaverso.
+// pÃ¡gina, antes de que se pinte el login o el metaverso.
 montarTema();
 import * as BABYLON from "babylonjs";
 import "babylonjs-loaders";
@@ -10,24 +10,25 @@ import { iniciarLogin } from "../page/login/login";
 import { mostrarDashboard } from "../page/dashboard/dashboard";
 import { obtenerSesion } from "../state/estado";
 import type { Clase } from "../state/estado";
-import { cargarPersonaje, type Personaje } from "./personaje";
+import { ALTURA_OBJETIVO_BASE, cargarPersonaje, fijarAlturaPersonaje, type Personaje } from "./personaje";
 import { crearAvataresRemotos, type AvataresRemotos } from "./avataresRemotos";
 import { crearListadoConectados, type ListadoConectados } from "../ui/listadoConectados";
 import { leerClaseDeLaUrl, escribirClaseEnLaUrl } from "../state/enlaceClase";
 import { t } from "../state/idioma";
 import { obtenerClasePorCodigo } from "../api/servicios";
 import type { EstadoLocal, Participante } from "../red/presencia";
-// UI MODULAR: se importa como cualquier otra pieza, así cada mapa nuevo reutiliza
+// UI MODULAR: se importa como cualquier otra pieza, asÃ­ cada mapa nuevo reutiliza
 // los mismos botones sin reescribirlos.
 import { crearMenuAjustes, leerVolumen, guardarVolumen, type MenuAjustes } from "../ui/menuAjustes";
 import { crearBarraUsuario, type BarraUsuario, type AccionBarra } from "../ui/barraUsuario";
 import { alternarMicrofono, estadoMicrofono, liberarMicrofono } from "../ui/microfono";
 import { crearCamaraWeb, type CamaraWeb } from "../ui/webcam";
-// TABLERO: PDF, vídeo, YouTube y compartir pantalla viven en su propio archivo,
+import { crearVideoSalon, type VideoSalon } from "../red/videoSalon";
+// TABLERO: PDF, vÃ­deo, YouTube y compartir pantalla viven en su propio archivo,
 // igual que la barra y los ajustes. El mapa solo lo importa y llama a su API.
 import { crearTablero, type Tablero } from "./tableroFuncionalidad";
-// FUNCIONALIDADES: caminar, sentarse, presentar en el atril y cámara viven
-// en su propio módulo; cualquier mapa los importa en vez de reescribirlos.
+// FUNCIONALIDADES: caminar, sentarse, presentar en el atril y cÃ¡mara viven
+// en su propio mÃ³dulo; cualquier mapa los importa en vez de reescribirlos.
 import {
   crearFuncionalidades,
   RADIO_PERSONAJE,
@@ -41,24 +42,53 @@ import {
 const canvas = document.querySelector<HTMLCanvasElement>("#renderCanvas")!;
 const engine = new BABYLON.Engine(canvas, true);
 
-// Escala a la que se importa el salón entero (cargarSalon la aplica a la raíz
-// del .glb justo al importarlo). El aula original medía 18.8 × 12.4 m con
-// muebles a tamaño real: el personaje (1.85 m) se perdía dentro, así que el
-// mapa baja al 85 % — 16 × 10.5 m, todavía grande — y el personaje sube a
+// Escala a la que se importa el salÃ³n entero (cargarSalon la aplica a la raÃ­z
+// del .glb justo al importarlo). El aula original medÃ­a 18.8 Ã— 12.4 m con
+// muebles a tamaÃ±o real: el personaje (1.85 m) se perdÃ­a dentro, asÃ­ que el
+// mapa baja al 85 % â€” 16 Ã— 10.5 m, todavÃ­a grande â€” y el personaje sube a
 // 1.85 m (ver ALTURA_OBJETIVO_U en personaje.ts). TODAS las medidas del mapa
-// (límites, sillas, atril, rayos, techo) se leen después de aplicar esta
-// escala, así que las constantes de este archivo van ya multiplicadas.
+// (lÃ­mites, sillas, atril, rayos, techo) se leen despuÃ©s de aplicar esta
+// escala, asÃ­ que las constantes de este archivo van ya multiplicadas.
 const ESCALA_SALON = 0.85;
 
-// Cara superior del suelo del salón. Medida con rayos (NullEngine) sobre el .glb:
-// room_primitive2 está en −0.789 en todo el salón (suelo plano); en el mundo
-// acaba en −0.789 × ESCALA_SALON. El personaje camina con los PIES AQUÍ, no
+// PRUEBA DE TEXTURAS (07/10) â€” mapa de pruebas POR CLASE: solo las clases de
+// esta lista cargan "mapes/salon.glb" (el .glb que saliÃ³ de Blender con los
+// colores/texturas, pero EN METROS â€”paredes 3.4 m, techo 5.2 mâ€” y todavÃ­a SIN
+// los nodos lÃ³gicos del prototipo: room, desk, desk_chair, sit_*, tablero_01,
+// TEACH_01), asÃ­ que allÃ­ solo se mira si los colores salieron bien: sin nodos
+// no hay sentarse, ni atril, ni colisiones de muebles, ni anclaje del tablero
+// (todo lo que falte cae en los fallbacks que ya tenÃ­a cargarSalon). El resto
+// de las clases cargan el prototipo con nodos, su escala y su techo normales.
+// entrarAlSalon() fija claseActiva antes de montar la escena, asÃ­ que
+// cargarSalon() decide el mapa con el cÃ³digo ya en mano. Al terminar la prueba,
+// dejar la lista vacÃ­a.
+// const CODIGOS_SALON_DE_PRUEBA: string[] = [];
+
+// ESTATURA DEL PERSONAJE: SIEMPRE la base (5.892 u = 1.85 m), tambiÃ©n en el
+// salÃ³n de prueba. El 7/10 por la tarde el usuario fijÃ³ en Blender TODAS las
+// estructuras de los mapas a una altura ya definida y comÃºn â€” "para no tener que
+// cada mapa agrandar o disminuir" â€” asÃ­ que ya no hay salÃ³n grande con
+// personaje grande: REU-175 usa la misma estatura que el resto de clases.
+
+// Escala del salÃ³n de prueba: 1 = TAL CUAL sale de Blender (7/10 tarde: el .glb
+// ya viene a la altura definida, no hay que calibrar un factor por mapa).
+// Medido con NullEngine sobre el .glb nuevo (altura relativa al parquÃ©):
+// pupitres 1.70â€“1.81 (y desk.003 a 2.05), asientos ~1.1, atril (Lecturn) 3.16,
+// TEACH_01 ~3.95, tablero_01 ~5.3, techo 11.7, sala 54.7Ã—28.8 â€” el mismo orden
+// de magnitud que el prototipo (que entra Ã—0.85): lectern/tablero/sala calzan.
+const ESCALA_SALON_DE_PRUEBA = 1;
+
+// Cara superior del suelo del salÃ³n. Medida con rayos (NullEngine) sobre el .glb:
+// room_primitive2 estÃ¡ en âˆ’0.789 en todo el salÃ³n (suelo plano); en el mundo
+// acaba en âˆ’0.789 Ã— ESCALA_SALON. El personaje camina con los PIES AQUÃ, no
 // en 0: con los pies en 0 flotaba sobre la laja.
 const SUELO_Y = -0.789 * ESCALA_SALON;
 
-// Altura del OJO de un adulto de pie en el mundo (suelo + ojo de la persona
-// de 1.85 m): por aquí arranca la cámara antes de que cargue el cuerpo.
-const ALTURA_ADULTO_PIE = SUELO_Y + ALTURA_OJO_PROFESOR;
+// Altura del OJO del personaje ACTIVO en el mundo (suelo + ojo de la estatura
+// vigente): por aquÃ­ arranca la cÃ¡mara antes de que cargue el cuerpo. Por
+// defecto la de siempre (1.85 m â†’ 5.35 u); createScene() la cambia ANTES de
+// montar la cÃ¡mara si la clase es de las de prueba (personaje mÃ¡s grande).
+let alturaOjoActiva = ALTURA_OJO_PROFESOR;
 
 // UI DE PROXIMIDAD
 const aviso = document.createElement("div");
@@ -100,18 +130,18 @@ avisoMano.style.boxShadow = "0 4px 14px rgba(0,0,0,0.35)";
 avisoMano.innerText = "El usuario ha alzado la mano";
 document.body.appendChild(avisoMano);
 
-// AVISO DE RATÓN BLOQUEADO (pointer lock)
+// AVISO DE RATÃ“N BLOQUEADO (pointer lock)
 // Al hacer clic en la escena se bloquea el puntero para mirar sin que el cursor
-// estorbe. Mientras dura el bloqueo TODOS los clics van al canvas, así que los
+// estorbe. Mientras dura el bloqueo TODOS los clics van al canvas, asÃ­ que los
 // botones de la barra y el engranaje no reciben nada: hay que pulsar Esc. Sin este
-// aviso no había forma de saberlo y el botón de volumen "a veces no funcionaba".
-// Se crea una sola vez a nivel de módulo, igual que el resto de avisos.
+// aviso no habÃ­a forma de saberlo y el botÃ³n de volumen "a veces no funcionaba".
+// Se crea una sola vez a nivel de mÃ³dulo, igual que el resto de avisos.
 const avisoRaton = document.createElement("div");
 avisoRaton.style.position = "fixed";
-// Justo POR ENCIMA del aviso de proximidad (que está en bottom:12% y es el que dice
+// Justo POR ENCIMA del aviso de proximidad (que estÃ¡ en bottom:12% y es el que dice
 // "Presiona E para sentarte" / "Presiona R para presentar en el atril").
 // Antes estaba a 96px fijos y, como el 12% sube con la altura de la ventana, en pantallas
-// altas los dos se solapaban y la píldora (z-index 1600) tapaba el mensaje de sentarse.
+// altas los dos se solapaban y la pÃ­ldora (z-index 1600) tapaba el mensaje de sentarse.
 avisoRaton.style.bottom = "calc(12% + 56px)";
 avisoRaton.style.left = "50%";
 avisoRaton.style.transform = "translateX(-50%)";
@@ -144,11 +174,11 @@ let atril: Atril | null = null;
 // Los "empty" del .glb (sit_*, TEACH_01, tablero_01, Plane.003...) son TransformNode y
 // Babylon NO puede colisionar contra ellos: el motor de colisiones solo recorre mallas
 // con checkCollisions (scene.meshes -> subMeshes). Por eso este AABB es la fuente de
-// verdad del recinto: de él salen los 4 muros invisibles "limite*" y el recorte de la
-// cámara, que es lo que evita que nadie salga del salón.
+// verdad del recinto: de Ã©l salen los 4 muros invisibles "limite*" y el recorte de la
+// cÃ¡mara, que es lo que evita que nadie salga del salÃ³n.
 let limitesSalon: { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null = null;
 
-// Comprueba si una posición respeta el recinto (sin moverla). Se usa para decidir si
+// Comprueba si una posiciÃ³n respeta el recinto (sin moverla). Se usa para decidir si
 // un movimiento es aceptable ANTES de ocuparlo, en vez de meterse y luego empujar.
 function dentroDelSalon(posicion: BABYLON.Vector3, margen = 0.6): boolean {
   if (!limitesSalon) return true;
@@ -161,8 +191,8 @@ function dentroDelSalon(posicion: BABYLON.Vector3, margen = 0.6): boolean {
   );
 }
 
-// Mantiene una posición dentro del salón (se usa para la cámara, que en tercera persona
-// lleva un offset de casi 7 unidades detrás del modelo y podría salir por un hueco).
+// Mantiene una posiciÃ³n dentro del salÃ³n (se usa para la cÃ¡mara, que en tercera persona
+// lleva un offset de casi 7 unidades detrÃ¡s del modelo y podrÃ­a salir por un hueco).
 function recortarAlSalon(posicion: BABYLON.Vector3, margen = 0.6): void {
   if (!limitesSalon) return;
   const { min, max } = limitesSalon;
@@ -171,18 +201,18 @@ function recortarAlSalon(posicion: BABYLON.Vector3, margen = 0.6): void {
 }
 
 // ---------------------------------------------------------------
-// OBSTÁCULOS SÓLIDOS (mesas "desk", sillas "desk_chair", atril "lecturn")
+// OBSTÃCULOS SÃ“LIDOS (mesas "desk", sillas "desk_chair", atril "lecturn")
 //
 // Estos NO van al motor de colisiones de Babylon. Motivo verificado con pruebas
 // sobre babylon.max.js (Collider._testTriangle / _getResponse): la laja de la mesa
 // mide solo 8 cm de alto (y 1.51..1.59) y queda DENTRO del elipsoide del personaje,
-// así que Babylon la detecta ya desde dentro, no puede salir hacia atrás y se queda
-// bloqueado. Síntoma: "atraviesan las mesas y después no me dejan salir".
+// asÃ­ que Babylon la detecta ya desde dentro, no puede salir hacia atrÃ¡s y se queda
+// bloqueado. SÃ­ntoma: "atraviesan las mesas y despuÃ©s no me dejan salir".
 //
-// Se resuelven a mano en el plano horizontal (círculo vs AABB en XZ). Es
-// determinista, no depende de los FPS, no permite túneles y, sobre todo, si el
-// cuerpo acaba dentro de la caja SIEMPRE lo devuelve por la cara más corta:
-// el atasco deja de ser posible por construcción.
+// Se resuelven a mano en el plano horizontal (cÃ­rculo vs AABB en XZ). Es
+// determinista, no depende de los FPS, no permite tÃºneles y, sobre todo, si el
+// cuerpo acaba dentro de la caja SIEMPRE lo devuelve por la cara mÃ¡s corta:
+// el atasco deja de ser posible por construcciÃ³n.
 // ---------------------------------------------------------------
 
 const obstaculosSolidos: ObstaculoSolido[] = [];
@@ -190,11 +220,11 @@ const obstaculosSolidos: ObstaculoSolido[] = [];
 // Altura del cuerpo usado para chocar (los muros "limite*" frenan a su altura).
 const ALTURA_PERSONAJE = 4.9;
 
-// ¿Hay algún mueble a menos de RADIO_PERSONAJE (medido en XZ) de la posición?
+// Â¿Hay algÃºn mueble a menos de RADIO_PERSONAJE (medido en XZ) de la posiciÃ³n?
 function haySolape(posicion: BABYLON.Vector3): boolean {
   const radioAlCuadrado = RADIO_PERSONAJE * RADIO_PERSONAJE;
   for (const obs of obstaculosSolidos) {
-    // Filtro de altura: solo chocan los obstáculos que tocan el cuerpo (y 0..4.9).
+    // Filtro de altura: solo chocan los obstÃ¡culos que tocan el cuerpo (y 0..4.9).
     if (obs.max.y < posicion.y || obs.min.y > posicion.y + ALTURA_PERSONAJE) continue;
     const cx = Math.min(Math.max(posicion.x, obs.min.x), obs.max.x);
     const cz = Math.min(Math.max(posicion.z, obs.min.z), obs.max.z);
@@ -205,21 +235,21 @@ function haySolape(posicion: BABYLON.Vector3): boolean {
   return false;
 }
 
-// Una posición es utilizable si respeta el recinto y no cae dentro de ningún mueble.
-// Es exactamente la condición que exige el bucle de render antes de aceptar un frame.
+// Una posiciÃ³n es utilizable si respeta el recinto y no cae dentro de ningÃºn mueble.
+// Es exactamente la condiciÃ³n que exige el bucle de render antes de aceptar un frame.
 function posicionValida(posicion: BABYLON.Vector3): boolean {
   return dentroDelSalon(posicion, RADIO_PERSONAJE) && !haySolape(posicion);
 }
 
-// Una única pasada de expulsión. El orden de las cajas importa: con dos muebles pegados,
-// sacar a alguien de uno puede meterlo dentro del otro, así que la pasada rota el inicio.
+// Una Ãºnica pasada de expulsiÃ³n. El orden de las cajas importa: con dos muebles pegados,
+// sacar a alguien de uno puede meterlo dentro del otro, asÃ­ que la pasada rota el inicio.
 function empujarUnaPasada(posicion: BABYLON.Vector3, desde: number): void {
   for (let i = 0; i < obstaculosSolidos.length; i++) {
     const obs = obstaculosSolidos[(i + desde) % obstaculosSolidos.length];
-    // Filtro de altura: solo chocan los obstáculos que tocan el cuerpo (y 0..4.9).
+    // Filtro de altura: solo chocan los obstÃ¡culos que tocan el cuerpo (y 0..4.9).
     if (obs.max.y < posicion.y || obs.min.y > posicion.y + ALTURA_PERSONAJE) continue;
 
-    // Punto de la caja más cercano al centro del personaje (proyección en XZ).
+    // Punto de la caja mÃ¡s cercano al centro del personaje (proyecciÃ³n en XZ).
     const cx = Math.min(Math.max(posicion.x, obs.min.x), obs.max.x);
     const cz = Math.min(Math.max(posicion.z, obs.min.z), obs.max.z);
     const dx = posicion.x - cx;
@@ -235,7 +265,7 @@ function empujarUnaPasada(posicion: BABYLON.Vector3, desde: number): void {
       posicion.x = cx + (dx / distancia) * RADIO_PERSONAJE;
       posicion.z = cz + (dz / distancia) * RADIO_PERSONAJE;
     } else {
-      // El centro quedó DENTRO de la caja: salir por la cara más corta.
+      // El centro quedÃ³ DENTRO de la caja: salir por la cara mÃ¡s corta.
       const caras = [
         posicion.x - obs.min.x,
         obs.max.x - posicion.x,
@@ -254,9 +284,9 @@ function empujarUnaPasada(posicion: BABYLON.Vector3, desde: number): void {
   }
 }
 
-// Red de seguridad: repite pasadas hasta que la posición quede libre. Solo llega aquí
+// Red de seguridad: repite pasadas hasta que la posiciÃ³n quede libre. Solo llega aquÃ­
 // un teletransporte (sentarte con E / atril con R) o algo fuera de lo previsto: en el
-// caminar normal el cuerpo nunca ocupa una posición que solape.
+// caminar normal el cuerpo nunca ocupa una posiciÃ³n que solape.
 function empujarFueraDeObstaculos(posicion: BABYLON.Vector3): void {
   for (let pasada = 0; pasada < 8 && haySolape(posicion); pasada++) {
     empujarUnaPasada(posicion, pasada);
@@ -267,64 +297,64 @@ let pantallaTablero: BABYLON.Mesh | null = null;
 let materialPantalla: BABYLON.StandardMaterial | null = null;
 
 // ---------------------------------------------------------------
-// MEDIDA DEL INTERIOR DEL SALÓN CON RAYOS
+// MEDIDA DEL INTERIOR DEL SALÃ“N CON RAYOS
 //
-// El AABB del mesh "room" NO es el aula: abarca también el hueco que queda detrás del
+// El AABB del mesh "room" NO es el aula: abarca tambiÃ©n el hueco que queda detrÃ¡s del
 // tablero y el pasillo del fondo (en este mapa se pasaba 10 unidades en -X y 11 en +Z),
-// así que con ese recinto la cámara y el modelo "atravesaban" la pared y acababan en la
+// asÃ­ que con ese recinto la cÃ¡mara y el modelo "atravesaban" la pared y acababan en la
 // zona negra de fuera. Para contener de verdad hay que medir la cara INTERNA del muro.
 //
-// Cómo: se lanzan rayos horizontales desde dentro del contenido del aula (los muebles
-// marcan dónde está el aula, no el pasillo) hacia cada lado, contra la carcasa
+// CÃ³mo: se lanzan rayos horizontales desde dentro del contenido del aula (los muebles
+// marcan dÃ³nde estÃ¡ el aula, no el pasillo) hacia cada lado, contra la carcasa
 // (room/ventanas/muros) y NUNCA contra muebles ni el suelo invisible. Se toma la MEDIANA
 // de los impactos: los rayos que se escapan por una puerta o una ventana dan distancias
 // enormes y la mediana los ignora. Si algo sale mal se devuelve null y se usa el AABB.
 // ---------------------------------------------------------------
 /**
- * TECHO MÁS ALTO — solo la altura: ancho (x) y fondo (z) no se tocan.
+ * TECHO MÃS ALTO â€” solo la altura: ancho (x) y fondo (z) no se tocan.
  *
- * Se hace POR TRAMOS para que las PUERTAS queden con su tamaño normal (si no, la
- * persona se vería enana al lado de la puerta) y lo que crezca sean los MARCOS y
+ * Se hace POR TRAMOS para que las PUERTAS queden con su tamaÃ±o normal (si no, la
+ * persona se verÃ­a enana al lado de la puerta) y lo que crezca sean los MARCOS y
  * las VENTANAS:
  *
- *     y <= TOPE_PUERTA   →  y' = y                     (MURO BAJO INTACTO)
- *     y >  TOPE_PUERTA   →  y' = TOPE + (y - TOPE) × FACTOR
+ *     y <= TOPE_PUERTA   â†’  y' = y                     (MURO BAJO INTACTO)
+ *     y >  TOPE_PUERTA   â†’  y' = TOPE + (y - TOPE) Ã— FACTOR
  *
- *     FACTOR = (TECHO + SUBIR_TECHO − TOPE) / (TECHO − TOPE)   ≈ 1.971
+ *     FACTOR = (TECHO + SUBIR_TECHO âˆ’ TOPE) / (TECHO âˆ’ TOPE)   â‰ˆ 1.971
  *
- * TOPE = 8.28 es el canto superior del hueco de la puerta: ahí termina el muro
- * bajo (las 4 puertas, los zócalos y los tableros verdes viven todos por debajo,
+ * TOPE = 8.28 es el canto superior del hueco de la puerta: ahÃ­ termina el muro
+ * bajo (las 4 puertas, los zÃ³calos y los tableros verdes viven todos por debajo,
  * porque todos sus huecos se cierran en esa misma cota) y empieza la banda alta.
- * Los 2 unidades de más se absorben TODOS por encima de esa cota, así que:
+ * Los 2 unidades de mÃ¡s se absorben TODOS por encima de esa cota, asÃ­ que:
  *
- *   · puertas (hoja + marco + vidrio superior) → EXACTAMENTE como estaban
- *   · tableros verdes y ventanas bajas         → como estaban (mismo hueco)
- *   · ventanas-transom y sus marcos            → ×1.97 de alto  ← lo que se pidió
- *   · techo                                    → 10.34 → 12.34
+ *   Â· puertas (hoja + marco + vidrio superior) â†’ EXACTAMENTE como estaban
+ *   Â· tableros verdes y ventanas bajas         â†’ como estaban (mismo hueco)
+ *   Â· ventanas-transom y sus marcos            â†’ Ã—1.97 de alto  â† lo que se pidiÃ³
+ *   Â· techo                                    â†’ 10.34 â†’ 12.34
  *
  * Por encima del canto todo escala igual (escala uniforme alrededor de TOPE), de
- * modo que los huecos siguen calzando con los marcos. Como la función solo depende
+ * modo que los huecos siguen calzando con los marcos. Como la funciÃ³n solo depende
  * de y, las aristas verticales siguen verticales: nada se "achaquita".
  *
- * Medido en el .glb: suelo -0.75/-0.80 · hoja de la puerta -0.75 → 4.98 (1.80 m
- * si 1 u ≈ 0.314 m; el personaje mide 5.57 u ≈ 1.75 m) · hueco de la puerta y
- * canto del muro bajo → 8.28 · tableros verdes 2.29 → 8.09 · ventanas-transom
- * 8.45 → 9.83 (vidrio 8.55 → 9.72) · ventanas laterales bajas 2.24 → 7.32 y altas
- * 7.57 → 9.06 · techo 10.34 · lámparas 9.81-10.34.
+ * Medido en el .glb: suelo -0.75/-0.80 Â· hoja de la puerta -0.75 â†’ 4.98 (1.80 m
+ * si 1 u â‰ˆ 0.314 m; el personaje mide 5.57 u â‰ˆ 1.75 m) Â· hueco de la puerta y
+ * canto del muro bajo â†’ 8.28 Â· tableros verdes 2.29 â†’ 8.09 Â· ventanas-transom
+ * 8.45 â†’ 9.83 (vidrio 8.55 â†’ 9.72) Â· ventanas laterales bajas 2.24 â†’ 7.32 y altas
+ * 7.57 â†’ 9.06 Â· techo 10.34 Â· lÃ¡mparas 9.81-10.34.
  *
- * La decoración colgada en la pared no se deforma: se TRANSLADA la distancia que
- * le tocaría por su altura (y como está toda por debajo del canto, no se mueve).
+ * La decoraciÃ³n colgada en la pared no se deforma: se TRANSLADA la distancia que
+ * le tocarÃ­a por su altura (y como estÃ¡ toda por debajo del canto, no se mueve).
  * Los muebles sobre el suelo (escritorios, sillas, libreros, atril) no se tocan.
  */
 // Cotas del .glb, ya llevadas a unidades del mundo con ESCALA_SALON (se leen
-// sobre geometría ya escalada; el cociente FACTOR_TECHO no cambia al escalar
-// las tres juntas, así que el dibujo del techo es idéntico en proporción).
+// sobre geometrÃ­a ya escalada; el cociente FACTOR_TECHO no cambia al escalar
+// las tres juntas, asÃ­ que el dibujo del techo es idÃ©ntico en proporciÃ³n).
 const SUBIR_TECHO = 2 * ESCALA_SALON; // unidades del mundo. 0 lo apaga.
 const TECHO_SALON = 10.34 * ESCALA_SALON; // cara de abajo del techo ORIGINAL, medida en el .glb
 const TOPE_PUERTA = 8.28 * ESCALA_SALON; // canto superior del hueco de la puerta (muro bajo), en el .glb
 const FACTOR_TECHO =
   (TECHO_SALON + SUBIR_TECHO - TOPE_PUERTA) / (TECHO_SALON - TOPE_PUERTA);
-const UMBRAL_TECHO = 9.75 * ESCALA_SALON; // red de seguridad por geometría (moldura 9.70 / borde 9.81)
+const UMBRAL_TECHO = 9.75 * ESCALA_SALON; // red de seguridad por geometrÃ­a (moldura 9.70 / borde 9.81)
 
 /** Altura final de un punto: intacta bajo la puerta, estirada encima de ella. */
 function mapearAltura(y: number): number {
@@ -340,7 +370,7 @@ const PATRON_ESCALA: RegExp[] = [
   /^Plane\.00[5789](?:_\d+|_primitive\d+)?$/, // vidrios de las ventanas del fondo
 ];
 
-// Decoración colgada en la pared: sube en proporción pero sin deformarse.
+// DecoraciÃ³n colgada en la pared: sube en proporciÃ³n pero sin deformarse.
 const PATRON_SUBIDA: RegExp[] = [
   /^Plane\.(?:001|01[789]|020|023|024)(?:_\d+|_primitive\d+)?$/,
 ];
@@ -354,17 +384,17 @@ function subirElTechoDeLaSala(escena: BABYLON.Scene): void {
     patrones.some((p) => p.test(nombre));
 
   // 1) Por nombre: la arquitectura se mueve con la MISMA regla que la pared.
-  //    "room" tiene 7 primitivas y Babylon puede repartirlas en "room_primitive0"…
-  //    o en "room_1", "room_2"; se cubren las dos formas y además "windows",
-  //    "Lights_hall" (si no, quedarían colgando) y los vidrios del fondo.
+  //    "room" tiene 7 primitivas y Babylon puede repartirlas en "room_primitive0"â€¦
+  //    o en "room_1", "room_2"; se cubren las dos formas y ademÃ¡s "windows",
+  //    "Lights_hall" (si no, quedarÃ­an colgando) y los vidrios del fondo.
   for (const malla of escena.meshes) {
     if (coincide(malla.name, PATRON_ESCALA)) escaladas.add(malla);
     else if (coincide(malla.name, PATRON_SUBIDA)) subidas.add(malla);
   }
 
-  // 2) Red de seguridad por GEOMETRÍA (no por nombre): así, aunque el .glb traya
-  //    el aula con otro nombre o partida en varias piezas, el salón sube igual.
-  //    Medido en el .glb actual: "room" ocupa x 60 anchos · z 39 de fondo ·
+  // 2) Red de seguridad por GEOMETRÃA (no por nombre): asÃ­, aunque el .glb traya
+  //    el aula con otro nombre o partida en varias piezas, el salÃ³n sube igual.
+  //    Medido en el .glb actual: "room" ocupa x 60 anchos Â· z 39 de fondo Â·
   //    y -0.80 (suelo) a 10.34 (techo); "background" llega hasta y 23.8 (por eso
   //    el techo de las mallas se limita a 15).
   for (const malla of escena.meshes) {
@@ -380,35 +410,35 @@ function subirElTechoDeLaSala(escena: BABYLON.Scene): void {
 
     if (yMax < UMBRAL_TECHO) continue; // no llega a la banda del techo
     if (yMax >= 15 * ESCALA_SALON) continue; // el entorno "background" no se toca
-    if (!(ancho > 40 * ESCALA_SALON || fondo > 20 * ESCALA_SALON)) continue; // no ocupa el salón entero
+    if (!(ancho > 40 * ESCALA_SALON || fondo > 20 * ESCALA_SALON)) continue; // no ocupa el salÃ³n entero
 
     const cascoDesdeElSuelo = yMin < 0.5 * ESCALA_SALON; // muros (y techo si van en la misma pieza)
     const losaSueltaArriba = yMin >= 9.5 * ESCALA_SALON; // techo o moldura separados del muro
     if (!cascoDesdeElSuelo && !losaSueltaArriba) continue;
 
     escaladas.add(malla);
-    console.log(`Escala de techo: malla "${malla.name}" reconocida como el salón por su tamaño.`);
+    console.log(`Escala de techo: malla "${malla.name}" reconocida como el salÃ³n por su tamaÃ±o.`);
   }
 
   // 3) Escala de TODA la arquitectura: paredes, huecos, marcos, vidrios, techo
-  //    y lámparas con la misma fórmula, así los huecos siguen calzando.
+  //    y lÃ¡mparas con la misma fÃ³rmula, asÃ­ los huecos siguen calzando.
   for (const malla of escaladas) escalarVerticalUnaMalla(malla);
 
   if (escaladas.size > 0) {
     console.log(
-      `Salón +${SUBIR_TECHO} u de alto: la puerta queda INTACTA hasta y=${TOPE_PUERTA}; ` +
+      `SalÃ³n +${SUBIR_TECHO} u de alto: la puerta queda INTACTA hasta y=${TOPE_PUERTA}; ` +
         `por encima, escala vertical x${FACTOR_TECHO.toFixed(3)} (techo ${TECHO_SALON} -> ` +
         `${mapearAltura(TECHO_SALON).toFixed(2)}) en ` +
         `${escaladas.size} mallas: ${[...escaladas].map((m) => m.name).join(", ")}.`
     );
   } else {
     console.warn(
-      `AVISO: no se encontró el salón para subir el techo (umbral y=${UMBRAL_TECHO}).`
+      `AVISO: no se encontrÃ³ el salÃ³n para subir el techo (umbral y=${UMBRAL_TECHO}).`
     );
   }
 
-  // 4) Decoración colgada en la pared: se agrupa por pieza del .glb para que las
-  //    primitivas de un mismo objeto suban juntas y no se separen entre sí.
+  // 4) DecoraciÃ³n colgada en la pared: se agrupa por pieza del .glb para que las
+  //    primitivas de un mismo objeto suban juntas y no se separen entre sÃ­.
   const grupos = new Map<string, BABYLON.AbstractMesh[]>();
   for (const malla of subidas) {
     const base = malla.name.replace(/(?:_\d+|_primitive\d+)$/, "");
@@ -432,7 +462,7 @@ function subirElTechoDeLaSala(escena: BABYLON.Scene): void {
 
     for (const malla of lista) subirProporcionalmenteUnaMalla(malla, delta);
     console.log(
-      `Decoración "${base}": sube ${delta.toFixed(2)} u en proporción al techo (sin deformarse).`
+      `DecoraciÃ³n "${base}": sube ${delta.toFixed(2)} u en proporciÃ³n al techo (sin deformarse).`
     );
   }
 }
@@ -447,7 +477,7 @@ function escalarVerticalUnaMalla(malla: BABYLON.AbstractMesh): boolean {
   mundo.invertToRef(inversa);
 
   // Se mide en el MUNDO (el piso es una altura del aula) y se vuelve a
-  // escribir en coordenadas locales: así funciona aunque la malla esté
+  // escribir en coordenadas locales: asÃ­ funciona aunque la malla estÃ©
   // escalada o girada por sus padres.
   const mundial = new BABYLON.Vector3();
   const local = new BABYLON.Vector3();
@@ -459,7 +489,7 @@ function escalarVerticalUnaMalla(malla: BABYLON.AbstractMesh): boolean {
     mundial.z = posiciones[i + 2];
     BABYLON.Vector3.TransformCoordinatesToRef(mundial, mundo, mundial);
 
-    // MISMA fórmula para todos: intacta bajo la puerta, estirada por encima.
+    // MISMA fÃ³rmula para todos: intacta bajo la puerta, estirada por encima.
     const yNuevo = mapearAltura(mundial.y);
     if (yNuevo === mundial.y) continue; // la puerta (y todo lo de abajo) no se mueve
 
@@ -488,8 +518,8 @@ function subirProporcionalmenteUnaMalla(malla: BABYLON.AbstractMesh, delta: numb
   const inversa = new BABYLON.Matrix();
   mundo.invertToRef(inversa);
 
-  // Traslación rígida en el MUNDO: la pieza sube la distancia que le tocaría por
-  // su altura, pero NO se deforma (un póster estirado al 18% se vería mal).
+  // TraslaciÃ³n rÃ­gida en el MUNDO: la pieza sube la distancia que le tocarÃ­a por
+  // su altura, pero NO se deforma (un pÃ³ster estirado al 18% se verÃ­a mal).
   const mundial = new BABYLON.Vector3();
   const local = new BABYLON.Vector3();
 
@@ -512,22 +542,86 @@ function subirProporcionalmenteUnaMalla(malla: BABYLON.AbstractMesh, delta: numb
   return true;
 }
 
+// Muebles (escritorios, sillas, atril): colisión propia vía ObstaculoSolido y
+// NUNCA checkCollisions (ver ObstaculoSolido: el motor se atasca en las lajas finas).
+function esMuebleNombre(nombre: string): boolean {
+  return nombre.includes("desk") || nombre.includes("chair") || nombre.includes("lecturn");
+}
+
+// Toda malla con geometría que NO sea mueble es estructura del salón (muros,
+// techo, parqués, cabinet, estantes…). La exportación actual del Blender no
+// trae ninguna malla llamada "room"/"wall", así que un filtro por nombre no
+// acertaba con NINGUNA malla y todo quedaba sin colisión: el personaje
+// atravesaba las paredes. La raíz "__root__" del loader no tiene vértices
+// propios y queda fuera; los muros invisibles "limite*", el suelo de colisión
+// y la pantalla del tablero se crean aparte y se excluyen por seguridad.
+function esMallaEstructura(m: BABYLON.AbstractMesh): boolean {
+  const n = m.name.toLowerCase();
+  if (n.startsWith("limite")) return false;
+  if (n === "suelocolision") return false;
+  if (n === "pantallaproyeccion") return false;
+  if (esMuebleNombre(n)) return false;
+  return !!m.getVerticesData(BABYLON.VertexBuffer.PositionKind);
+}
+
+// Caja del recinto cuando el .glb NO trae el mesh "room" (exportación actual).
+// x/z salen del parqué (Cube.021) y, si no lo hubiera, de la unión de la
+// estructura; y sale del techo de las mallas de estructura que caen sobre el
+// parqué — el "background" del exterior solo entra si su AABB se solapa en x/z
+// con el parqué, y aun así solo encarecería el muro invisible de más, que no
+// cambia nada (nadie vuela por encima de la cabeza del personaje). NO se filtra
+// por altura absoluta: el techo, después de subirElTechoDeLaSala(), supera
+// cualquier cota fija razonable. El suelo se fija en SUELO_Y: es la altura
+// exacta a la que pisa el personaje, y de paso hace que las alturas de los
+// rayos de medirInteriorDelSalon (cajaRoom.min.y + n) caigan en la banda libre
+// del muro y no dentro del pavimento.
+function cajaDelRecintoPorGeometria(
+  mallas: BABYLON.AbstractMesh[]
+): { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null {
+  const estructura: BABYLON.AbstractMesh[] = [];
+  for (const m of mallas) {
+    if (!esMallaEstructura(m)) continue;
+    m.computeWorldMatrix(true);
+    m.refreshBoundingInfo(false, false);
+    estructura.push(m);
+  }
+  if (!estructura.length) return null;
+
+  const piso = estructura.find((m) => m.name === "Cube.021") ?? null;
+  const paraXZ = piso ? [piso] : estructura;
+
+  const min = new BABYLON.Vector3(Infinity, SUELO_Y, Infinity);
+  const max = new BABYLON.Vector3(-Infinity, SUELO_Y, -Infinity);
+  for (const m of paraXZ) {
+    const caja = m.getBoundingInfo().boundingBox;
+    min.x = Math.min(min.x, caja.minimumWorld.x);
+    min.z = Math.min(min.z, caja.minimumWorld.z);
+    max.x = Math.max(max.x, caja.maximumWorld.x);
+    max.z = Math.max(max.z, caja.maximumWorld.z);
+  }
+  if (!isFinite(min.x) || !isFinite(max.x) || min.x >= max.x || min.z >= max.z) return null;
+
+  // y: arriba, el techo de la estructura que cae sobre el parqué (x/z ya medidos).
+  for (const m of estructura) {
+    const caja = m.getBoundingInfo().boundingBox;
+    if (caja.maximumWorld.x < min.x || caja.minimumWorld.x > max.x) continue;
+    if (caja.maximumWorld.z < min.z || caja.minimumWorld.z > max.z) continue;
+    max.y = Math.max(max.y, caja.maximumWorld.y);
+  }
+  if (max.y <= min.y) return null;
+
+  return { min, max };
+}
+
 function medirInteriorDelSalon(
   escena: BABYLON.Scene,
   candidatas: BABYLON.AbstractMesh[],
   cajaRoom: { min: BABYLON.Vector3; max: BABYLON.Vector3 },
   cajaContenido: { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null
 ): { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null {
-  const esCarcasa = (m: BABYLON.AbstractMesh) => {
-    const n = m.name.toLowerCase();
-    if (n.startsWith("limite")) return false; // son nuestros muros invisibles
-    return (
-      n.includes("room") ||
-      n.includes("window") ||
-      n.includes("wall") ||
-      n.includes("pared")
-    );
-  };
+  // Carcasa = estructura con geometría (muros, ventanas, techo…), nunca muebles
+  // ni los muros invisibles "limite*": los rayos miden la cara interna del aula.
+  const esCarcasa = esMallaEstructura;
 
   const mallas = candidatas.filter(esCarcasa);
   if (!mallas.length) return null;
@@ -538,7 +632,7 @@ function medirInteriorDelSalon(
       m.refreshBoundingInfo(false, false);
     }
 
-    // Orígenes: dentro de la caja de muebles, separada 1 unidad (a escala del
+    // OrÃ­genes: dentro de la caja de muebles, separada 1 unidad (a escala del
     // .glb) del borde.
     const origen = cajaContenido ?? cajaRoom;
     const inset = ESCALA_SALON;
@@ -551,7 +645,7 @@ function medirInteriorDelSalon(
     const centroX = (minX + maxX) / 2;
     const centroZ = (minZ + maxZ) / 2;
     // Alturas sobre el suelo: por debajo del dintel de las ventanas y por encima de
-    // mesas/sillas/atril (que además no están en la carcasa, así que no importan).
+    // mesas/sillas/atril (que ademÃ¡s no estÃ¡n en la carcasa, asÃ­ que no importan).
     const alturas = [2, 2.6, 3.8].map((a) => cajaRoom.min.y + a * ESCALA_SALON);
     const rayosPorAltura = 15;
     const alcance =
@@ -591,7 +685,7 @@ function medirInteriorDelSalon(
     if (tra !== null) max.z = centroZ + tra;
 
     // Control de salud: la caja medida tiene que seguir metida en el "room" y tener
-    // dentro a los muebles. Si no, el AABB original es más seguro que una medida rara.
+    // dentro a los muebles. Si no, el AABB original es mÃ¡s seguro que una medida rara.
     const cabeEnRoom =
       min.x >= cajaRoom.min.x &&
       max.x <= cajaRoom.max.x &&
@@ -612,23 +706,96 @@ function medirInteriorDelSalon(
   }
 }
 
-async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> {
-  const resultado = await BABYLON.SceneLoader.ImportMeshAsync(
-    "",
-    "/models/",
-    "prototipo_mapa_vista_sentarse.glb",
-    scene
-  );
+  async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> {
+    // Usar siempre salon.glb como mapa principal
+    const resultado = await BABYLON.SceneLoader.ImportMeshAsync(
+      "",
+      "/models/mapes/",
+      "salon.glb",
+      scene
+    );
 
   const salon = resultado.meshes[0];
   salon.position = BABYLON.Vector3.Zero();
-  // El salón entero entra a ESCALA_SALON (raíz "__root__" del loader: multiplica
+  // El salÃ³n entero entra a ESCALA_SALON (raÃ­z "__root__" del loader: multiplica
   // mallas, empties y huesos de una vez, conservando el flip -Z de handedness).
-  // Se hace JUSTO DESPUÉS de importar y ANTES de medir nada: todos los rayos,
-  // límites, sillas y obstáculos de este función salen ya en unidades del
+  // Se hace JUSTO DESPUÃ‰S de importar y ANTES de medir nada: todos los rayos,
+  // lÃ­mites, sillas y obstÃ¡culos de este funciÃ³n salen ya en unidades del
   // mundo y calzan con lo que se ve en pantalla.
-  salon.scaling = salon.scaling.multiplyByFloats(ESCALA_SALON, ESCALA_SALON, ESCALA_SALON);
+  // La prueba entra TAL CUAL (Ã—1: el .glb ya viene de Blender a la altura
+  // definida el 7/10 â€” no se agranda ni se disminuye); el prototipo, ESCALA_SALON.
+  salon.scaling = salon.scaling.multiplyByFloats(ESCALA_SALON_DE_PRUEBA, ESCALA_SALON_DE_PRUEBA, ESCALA_SALON_DE_PRUEBA);
   salon.computeWorldMatrix(true);
+
+    {
+      // salon.glb: centrar el AULA en (0,0) para que el spawn del centro de
+    // la clase caiga en mitad del parquÃ©, y apoyar la CARA SUPERIOR del parquÃ©
+    // exactamente en SUELO_Y, que es donde pisa el personaje. Se centra sobre la
+    // malla del piso (Cube.021, material "Beech Wood Flooring Planks"); si un
+    // export futuro la renombra, se cae a la caja del modelo entero y el spawn
+    // queda en una esquina. El AABB se mide con la escala ya puesta y la posiciÃ³n
+    // todavÃ­a en cero, asÃ­ que el centrado sale directo en unidades del mundo con
+    // el flip del loader incluido.
+    //
+    // OJO: en la exportaciÃ³n del 7/10 el parquÃ© NO estÃ¡ en y=0 (estÃ¡ en -0.34),
+    // asÃ­ que apoyar el y=0 en SUELO_Y dejarÃ­a al personaje flotando 0.93 u
+    // sobre la laja (y la cadera no calzarÃ­a con la mesa). Por eso primero se
+    // centra en XZ con y=0 y luego se mide con un rayo, justo en el spawn, la
+    // altura REAL del parquÃ© para desplazar el salÃ³n: suelo medido = SUELO_Y,
+    // pies clavados en la laja.
+    const mallaPiso = resultado.meshes.find((m) => m.name === "Cube.021") ?? null;
+    const aCentrar = mallaPiso ? [mallaPiso] : resultado.meshes;
+    const min = new BABYLON.Vector3(
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY,
+      Number.POSITIVE_INFINITY
+    );
+    const max = new BABYLON.Vector3(
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY,
+      Number.NEGATIVE_INFINITY
+    );
+    for (const malla of aCentrar) {
+      if (!malla.getVerticesData(BABYLON.VertexBuffer.PositionKind)) continue;
+      malla.computeWorldMatrix(true);
+      const caja = malla.getBoundingInfo().boundingBox;
+      min.x = Math.min(min.x, caja.minimumWorld.x);
+      min.y = Math.min(min.y, caja.minimumWorld.y);
+      min.z = Math.min(min.z, caja.minimumWorld.z);
+      max.x = Math.max(max.x, caja.maximumWorld.x);
+      max.y = Math.max(max.y, caja.maximumWorld.y);
+      max.z = Math.max(max.z, caja.maximumWorld.z);
+    }
+
+    salon.position = new BABYLON.Vector3(-(min.x + max.x) / 2, 0, -(min.z + max.z) / 2);
+    salon.computeWorldMatrix(true);
+
+    let sueloMedido = min.y;
+    if (mallaPiso) {
+      mallaPiso.computeWorldMatrix(true);
+      mallaPiso.refreshBoundingInfo(false, false);
+      // Rayo SOLO contra el piso, lanzado un poco por encima de su canto inferior
+      // y justo donde caerÃ¡ el spawn (0,0): la primera cara del parquÃ© que tope
+      // es la superficie andable.
+      const rayoSuelo = scene.pickWithRay(
+        new BABYLON.Ray(new BABYLON.Vector3(0, min.y + 1, 0), new BABYLON.Vector3(0, -1, 0), 4),
+        (malla) => malla === mallaPiso
+      );
+      if (rayoSuelo?.hit && rayoSuelo.pickedPoint) sueloMedido = rayoSuelo.pickedPoint.y;
+    }
+    salon.position.y = SUELO_Y - sueloMedido;
+    salon.computeWorldMatrix(true);
+
+    console.log(
+      `salon.glb: ` +
+        `centrado sobre ${mallaPiso ? `"${mallaPiso.name}" (el piso)` : "la caja del modelo"}: ` +
+        `x[${min.x.toFixed(1)}, ${max.x.toFixed(1)}] ` +
+        `y[${min.y.toFixed(1)}, ${max.y.toFixed(1)}] ` +
+        `z[${min.z.toFixed(1)}, ${max.z.toFixed(1)}] -> ` +
+        `posiciÃ³n (${salon.position.x.toFixed(1)}, ${salon.position.y.toFixed(2)}, ` +
+        `${salon.position.z.toFixed(1)}) Â· parquÃ© medido en y=${sueloMedido.toFixed(2)}`
+    );
+  }
 
   paresSillas.length = 0;
   obstaculosSolidos.length = 0;
@@ -640,10 +807,10 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
   todasLasMallas.forEach((mesh) => {
     const nombre = mesh.name.toLowerCase();
 
-    // Muebles y atril: colisión propia (ver ObstaculoSolido). Si también le damos
-    // checkCollisions, Babylon y el corrector pelean por la misma posición y el
+    // Muebles y atril: colisiÃ³n propia (ver ObstaculoSolido). Si tambiÃ©n le damos
+    // checkCollisions, Babylon y el corrector pelean por la misma posiciÃ³n y el
     // elipsoide vuelve a quedarse atrapado dentro de la laja de la mesa.
-    if (nombre.includes("desk") || nombre.includes("chair") || nombre.includes("lecturn")) {
+    if (esMuebleNombre(nombre)) {
       mesh.checkCollisions = false;
 
       mesh.computeWorldMatrix(true);
@@ -657,61 +824,84 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
       return;
     }
 
-    // Estructura del salón: se deja al motor de colisiones (muros + suelo + room).
-    const esEstructura =
-      nombre.includes("room") ||
-      nombre.includes("wall") ||
-      nombre.includes("pared") ||
-      nombre.includes("piso") ||
-      nombre.includes("floor") ||
-      nombre.includes("shelf") ||
-      nombre.includes("bookcase") ||
-      nombre.includes("estante") ||
-      nombre.includes("libreria");
-
-    mesh.checkCollisions = esEstructura;
+    // Estructura del salón (muros, techo, parqués, cabinet…): al motor de
+    // colisiones. Antes se filtraba por nombres ("room"/"wall"/…) y la
+    // exportación actual del Blender no trae NINGUNA malla con esos nombres
+    // (los muros son Cube.011, Cube.012, cabinet.003, Cube.003…), así que
+    // todas quedaban con checkCollisions=false y el personaje se salía
+    // andando por la pared. Ahora toda malla con geometría que no sea mueble
+    // es estructura (esMallaEstructura); los muebles ya salieron arriba.
+    mesh.checkCollisions = esMallaEstructura(mesh);
   });
 
   console.log(
-    `Obstáculos sólidos -> ${obstaculosSolidos.length}: ` +
+    `ObstÃ¡culos sÃ³lidos -> ${obstaculosSolidos.length}: ` +
       obstaculosSolidos.map((o) => o.nombre).join(", ")
   );
 
   // ---------------------------------------------------------------
-  // LÍMITES DEL SALÓN (colisión con los "empty")
-  // Un empty no es una malla, así que no se le puede poner checkCollisions.
+  // LÃMITES DEL SALÃ“N (colisiÃ³n con los "empty")
+  // Un empty no es una malla, asÃ­ que no se le puede poner checkCollisions.
   // Se levantan 4 muros invisibles cuya cara interna cae sobre la pared INTERNA del
   // aula (medida con rayos, ver medirInteriorDelSalon) y crecen hacia fuera: solo
-  // sirven para contener. Con el AABB crudo de "room" sobraban 10 unidades detrás del
-  // tablero y 11 en el pasillo, y por ahí se colaban la cámara y el modelo.
+  // sirven para contener. Con el AABB crudo de "room" sobraban 10 unidades detrÃ¡s del
+  // tablero y 11 en el pasillo, y por ahÃ­ se colaban la cÃ¡mara y el modelo.
   // ---------------------------------------------------------------
-  // El techo sube ANTES de medir: así el AABB y los muros invisibles ya salen con
-  // la altura nueva y no hay que rehacer la medición.
+  // El techo sube ANTES de medir: asÃ­ el AABB y los muros invisibles ya salen con
+  // la altura nueva y no hay que rehacer la mediciÃ³n. En la prueba (salon.glb con
+  // texturas) NO se sube: mapearAltura() estira por encima de TOPE_PUERTA y
+  // deformarÃ­a las texturas de las paredes; ademÃ¡s el techo real (â‰ˆ 4.4 m) ya
+  // deja pasar la cÃ¡mara, que no sube de la altura del ojo (alturaOjoActiva).
   subirElTechoDeLaSala(scene);
 
   limitesSalon = null;
+
+  // Caja ocupada por los muebles: marca "dónde está el aula" y de ahí salen los rayos.
+  let cajaContenido: { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null = null;
+  for (const obs of obstaculosSolidos) {
+    if (!cajaContenido) {
+      cajaContenido = { min: obs.min.clone(), max: obs.max.clone() };
+      continue;
+    }
+    cajaContenido.min.x = Math.min(cajaContenido.min.x, obs.min.x);
+    cajaContenido.min.z = Math.min(cajaContenido.min.z, obs.min.z);
+    cajaContenido.max.x = Math.max(cajaContenido.max.x, obs.max.x);
+    cajaContenido.max.z = Math.max(cajaContenido.max.z, obs.max.z);
+  }
+
+  // CAJA BASE DEL RECINTO. Con el mesh "room" se usa su AABB (como hasta ahora).
+  // Sin él —la exportación actual del Blender no lo trae— se arma desde la
+  // geometría del propio .glb (parqué para x/z, techo de la estructura para y).
+  // Sin esta caja no existen los muros "limite*", dentroDelSalon() devolvía
+  // siempre true y el personaje y la cámara se salían del aula por cualquier lado.
   const meshRoom = todasLasMallas.find((m) => m.name.toLowerCase().includes("room"));
+  let cajaRecinto: { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null = null;
+  let vinoDelRoom = false;
 
   if (meshRoom) {
     meshRoom.computeWorldMatrix(true);
     meshRoom.refreshBoundingInfo(false, false);
-
     const bb = meshRoom.getBoundingInfo().boundingBox;
-    const min = bb.minimumWorld.clone();
-    const max = bb.maximumWorld.clone();
-
-    // Caja ocupada por los muebles: marca "dónde está el aula" y de ahí salen los rayos.
-    let cajaContenido: { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null = null;
-    for (const obs of obstaculosSolidos) {
-      if (!cajaContenido) {
-        cajaContenido = { min: obs.min.clone(), max: obs.max.clone() };
-        continue;
-      }
-      cajaContenido.min.x = Math.min(cajaContenido.min.x, obs.min.x);
-      cajaContenido.min.z = Math.min(cajaContenido.min.z, obs.min.z);
-      cajaContenido.max.x = Math.max(cajaContenido.max.x, obs.max.x);
-      cajaContenido.max.z = Math.max(cajaContenido.max.z, obs.max.z);
+    cajaRecinto = { min: bb.minimumWorld.clone(), max: bb.maximumWorld.clone() };
+    vinoDelRoom = true;
+    console.log(
+      `AABB del mesh "room" (demasiado grande) -> x[${bb.minimumWorld.x.toFixed(2)}, ${bb.maximumWorld.x.toFixed(2)}] ` +
+        `z[${bb.minimumWorld.z.toFixed(2)}, ${bb.maximumWorld.z.toFixed(2)}]`
+    );
+  } else {
+    cajaRecinto = cajaDelRecintoPorGeometria(todasLasMallas);
+    if (cajaRecinto) {
+      console.log(
+        `Sin mesh "room": recinto armado desde la geometría -> ` +
+          `x[${cajaRecinto.min.x.toFixed(2)}, ${cajaRecinto.max.x.toFixed(2)}] ` +
+          `y[${cajaRecinto.min.y.toFixed(2)}, ${cajaRecinto.max.y.toFixed(2)}] ` +
+          `z[${cajaRecinto.min.z.toFixed(2)}, ${cajaRecinto.max.z.toFixed(2)}]`
+      );
     }
+  }
+
+  if (cajaRecinto) {
+    const { min, max } = cajaRecinto;
 
     const interior = medirInteriorDelSalon(scene, todasLasMallas, { min, max }, cajaContenido);
     if (interior) {
@@ -732,8 +922,8 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
         scene
       );
       muro.position = new BABYLON.Vector3(x, min.y + alto / 2, z);
-      // La posición cambia después de crear la caja: hay que refrescar la matriz de
-      // mundo y el AABB o el rechazo rápido de colisión seguiría con la caja en el origen.
+      // La posiciÃ³n cambia despuÃ©s de crear la caja: hay que refrescar la matriz de
+      // mundo y el AABB o el rechazo rÃ¡pido de colisiÃ³n seguirÃ­a con la caja en el origen.
       muro.computeWorldMatrix(true);
       muro.refreshBoundingInfo(false, false);
       muro.checkCollisions = true;
@@ -760,16 +950,14 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
     );
 
     console.log(
-      `AABB del mesh "room" (demasiado grande) -> x[${bb.minimumWorld.x.toFixed(2)}, ${bb.maximumWorld.x.toFixed(2)}] ` +
-        `z[${bb.minimumWorld.z.toFixed(2)}, ${bb.maximumWorld.z.toFixed(2)}]`
-    );
-    console.log(
-      `Límites del salón${interior ? " (pared interior medida con rayos)" : " (sin medida: AABB de room)"} -> ` +
+      `Límites del salón${interior ? " (pared interior medida con rayos)" : vinoDelRoom ? " (sin medida: AABB de room)" : " (sin medida: geometría del salón)"} -> ` +
         `x[${min.x.toFixed(2)}, ${max.x.toFixed(2)}] ` +
         `y[${min.y.toFixed(2)}, ${max.y.toFixed(2)}] z[${min.z.toFixed(2)}, ${max.z.toFixed(2)}]`
     );
   } else {
-    console.warn("No se encontró el mesh 'room': el salón queda sin muros de contención.");
+    console.warn(
+      "No se encontró el mesh 'room' ni la geometría del salón: el salón queda sin muros de contención."
+    );
   }
 
   let nodoTablero: BABYLON.AbstractMesh | BABYLON.TransformNode | null = null;
@@ -789,30 +977,34 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
   if (nodoTablero) {
     nodoTablero.computeWorldMatrix(true);
 
-    // El empty "tablero_01" MARCA el área del tablero (así lo puso el modelo): su
-    // escala es la MEDIA-distancia del recuadro que Blender dibuja, así que el
-    // tablero mide 2 × escala. Con el .glb actual eso da 21.61 de ancho (z) ×
+    // El empty "tablero_01" MARCA el Ã¡rea del tablero (asÃ­ lo puso el modelo): su
+    // escala es la MEDIA-distancia del recuadro que Blender dibuja, asÃ­ que el
+    // tablero mide 2 Ã— escala. Con el .glb actual eso da 21.61 de ancho (z) Ã—
     // 7.40 de alto (y), centrado en y 5.70 (content y[2.00, 9.41]). Ojo: la
-    // pizarra física YA NO EXISTE en el .glb (se borró en la exportación del
-    // 30/09), así que el contenido va directo sobre la pared, cuya cara interna
-    // está en x -21.374; el plano queda en x -21.130, o sea 0.24 por delante,
+    // pizarra fÃ­sica YA NO EXISTE en el .glb (se borrÃ³ en la exportaciÃ³n del
+    // 30/09), asÃ­ que el contenido va directo sobre la pared, cuya cara interna
+    // estÃ¡ en x -21.374; el plano queda en x -21.130, o sea 0.24 por delante,
     // que es lo que evita el z-fighting.
-    // El plano se construye 2×2 en local y, como hereda la escala del empty,
+    // El plano se construye 2Ã—2 en local y, como hereda la escala del empty,
     // acaba exactamente en esas medidas: si agrandas el empty en Blender, el
-    // área del tablero crece sola sin tocar código.
+    // Ã¡rea del tablero crece sola sin tocar cÃ³digo.
     //
-    // EL EMPTY TAMBIÉN SE HACE MÁS GRANDE AL SUBIR EL TECHO. El hueco del tablero
-    // está en la pared y la pared se deforma con mapearAltura() (intacta hasta
-    // y=8.28 y estirada por encima), así que el área del empty tiene que llevarse
-    // con la MISMA función: si no, el tablero queda más alto que las diapositivas
-    // (la pared crece y el contenido se queda donde estaba). El plano es 2×2 y está
-    // centrado en el origen del empty, así que bastan dos condiciones —canto
-    // inferior y canto superior— para fijar media-altura (scaling.y) y centro
+    // EL EMPTY TAMBIÃ‰N SE HACE MÃS GRANDE AL SUBIR EL TECHO. El hueco del tablero
+    // estÃ¡ en la pared y la pared se deforma con mapearAltura() (intacta hasta
+    // y=8.28 y estirada por encima), asÃ­ que el Ã¡rea del empty tiene que llevarse
+    // con la MISMA funciÃ³n: si no, el tablero queda mÃ¡s alto que las diapositivas
+    // (la pared crece y el contenido se queda donde estaba). El plano es 2Ã—2 y estÃ¡
+    // centrado en el origen del empty, asÃ­ que bastan dos condiciones â€”canto
+    // inferior y canto superiorâ€” para fijar media-altura (scaling.y) y centro
     // (position.y). x y z no se tocan: la pared solo crece hacia arriba.
     const matrizTablero = nodoTablero.getWorldMatrix();
     const centroY = BABYLON.Vector3.TransformCoordinates(BABYLON.Vector3.Zero(), matrizTablero).y;
     const arribaY = BABYLON.Vector3.TransformCoordinates(new BABYLON.Vector3(0, 1, 0), matrizTablero).y;
     const media = arribaY - centroY;
+    // Solo en el prototipo: allÃ­ el techo SUBE (subirElTechoDeLaSala y
+    // mapearAltura) y el empty tiene que estirarse con la pared. En el salÃ³n de
+    // prueba el techo NO se sube (mapearAltura estirarÃ­a las texturas), asÃ­ que
+    // el empty se queda exactamente donde lo puso Blender.
     if (Math.abs(media) > 1e-6) {
       const bajo = centroY - media;
       const alto = centroY + media;
@@ -822,9 +1014,9 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
       nodoTablero.scaling.y *= factor;
       nodoTablero.position.y += (nuevoAlto + nuevoBajo - (alto + bajo)) / 2;
       console.log(
-        `Tablero: el empty "tablero_01" sigue el mismo mapa que la pared: área ` +
+        `Tablero: el empty "tablero_01" sigue el mismo mapa que la pared: Ã¡rea ` +
           `y[${bajo.toFixed(2)}, ${alto.toFixed(2)}] -> [${nuevoBajo.toFixed(2)}, ` +
-          `${nuevoAlto.toFixed(2)}] (escala y ×${factor.toFixed(3)})`
+          `${nuevoAlto.toFixed(2)}] (escala y Ã—${factor.toFixed(3)})`
       );
     }
 
@@ -834,7 +1026,7 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
     pantallaTablero = BABYLON.MeshBuilder.CreatePlane("PantallaProyeccion", { width: anchoLocal, height: altoLocal }, scene);
     pantallaTablero.material = materialPantalla;
     pantallaTablero.parent = nodoTablero;
-    // -90° en Y: la cara del plano mira hacia el aula (-X); el ancho cae sobre
+    // -90Â° en Y: la cara del plano mira hacia el aula (-X); el ancho cae sobre
     // el eje Z del empty y el alto sobre su Y.
     pantallaTablero.rotation = new BABYLON.Vector3(0, -Math.PI / 2, 0);
     pantallaTablero.position = new BABYLON.Vector3(0.02, 0, 0);
@@ -882,8 +1074,8 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
     }
 
     // Rumbo de la silla: se descompone su matriz MUNDIAL (el flip de
-    // handedness del glTF queda absorbido en la descomposición — medido con
-    // NullEngine: −90° en todas las sillas del salón). Es el rumbo con el
+    // handedness del glTF queda absorbido en la descomposiciÃ³n â€” medido con
+    // NullEngine: âˆ’90Â° en todas las sillas del salÃ³n). Es el rumbo con el
     // que hay que sentarse para quedar mirando al frente del puesto, sea
     // cual sea el lado desde el que se llegue.
     let rotSilla = NaN;
@@ -942,10 +1134,17 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
     if (nodoTeach) {
       nodoTeach.computeWorldMatrix(true);
       posEnsenar = nodoTeach.absolutePosition.clone();
-      // Nota: puntoEnsenar hoy no se lee en ninguna parte (la cámara del atril
+      // Nota: puntoEnsenar hoy no se lee en ninguna parte (la cÃ¡mara del atril
       // se arma en funcionalidades con detrasDelAtril + alturaOjoProfesor).
-      posEnsenar.y += ALTURA_OJO_PROFESOR; 
+      posEnsenar.y += alturaOjoActiva;
       rotEnsenar = nodoTeach.rotationQuaternion ? nodoTeach.rotationQuaternion.toEulerAngles().y : nodoTeach.rotation.y;
+      // Sin malla "lecturn" (el salÃ³n de prueba solo trae el empty TEACH_01),
+      // el punto de atril es el propio empty: asÃ­ la R de "presentar en el
+      // atril" y la proximidad del menÃº P apuntan a su pizarra y no al (0,0)
+      // del centro de la clase.
+      if (!meshAtril) {
+        posAtril = new BABYLON.Vector3(posEnsenar.x, SUELO_Y, posEnsenar.z);
+      }
     } else {
       posEnsenar = posAtril.clone();
       posEnsenar.y += 2.5 * ESCALA_SALON;
@@ -965,13 +1164,13 @@ async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> 
 // TABLERO Y VOLUMEN DE LA APP
 // ============================================================
 
-// El tablero de ESTA partida (src/3d/tableroFuncionalidad.ts). Aquí solo se crea,
-// se le pasa el volumen y se le llama la API: la lógica del proyector no vive ya
+// El tablero de ESTA partida (src/3d/tableroFuncionalidad.ts). AquÃ­ solo se crea,
+// se le pasa el volumen y se le llama la API: la lÃ³gica del proyector no vive ya
 // en este archivo, que es el del mapa y del personaje.
 let tablero: Tablero | null = null;
 
-// Volumen general (0..1). Vive aquí porque lo aplican a la vez el menú de ajustes
-// y el botón 🔊 de la barra; se persiste en el navegador desde src/ui/menuAjustes.ts.
+// Volumen general (0..1). Vive aquÃ­ porque lo aplican a la vez el menÃº de ajustes
+// y el botÃ³n ðŸ”Š de la barra; se persiste en el navegador desde src/ui/menuAjustes.ts.
 let volumenGeneral = leerVolumen();
 let volumenAntesDeSilenciar: number | null = null;
 
@@ -979,17 +1178,17 @@ let volumenAntesDeSilenciar: number | null = null;
 // al volver a entrar, no se registren los mismos listeners otra vez.
 const limpiadoresDePartida: Array<() => void> = [];
 
-// Código de la clase en la que se está jugando ahora mismo. Lo necesita el
-// módulo de presencia (para meterse en la sala "clase:CODIGO") y la píldora de
-// conectados, que lo enseña arriba a la izquierda.
+// CÃ³digo de la clase en la que se estÃ¡ jugando ahora mismo. Lo necesita el
+// mÃ³dulo de presencia (para meterse en la sala "clase:CODIGO") y la pÃ­ldora de
+// conectados, que lo enseÃ±a arriba a la izquierda.
 let claseActiva = "";
 
 /**
- * VOLUMEN DE LA APP: manda sobre todo lo que suena DENTRO del metaverso — el vídeo
+ * VOLUMEN DE LA APP: manda sobre todo lo que suena DENTRO del metaverso â€” el vÃ­deo
  * del tablero, YouTube, la pantalla compartida y, cuando llegue el chat por
  * proximidad, las voces (entran por el audio global de Babylon).
  *
- * No toca el volumen del portátil: el slider multiplica con el del sistema
+ * No toca el volumen del portÃ¡til: el slider multiplica con el del sistema
  * operativo, que el navegador no deja saltarse.
  */
 function aplicarVolumenGlobal(): void {
@@ -1008,8 +1207,20 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   scene.collisionsEnabled = true;
   scene.clearColor = new BABYLON.Color4(0.75, 0.85, 0.95, 1);
 
-  // 1. CONFIGURAR LA CÁMARA
-  const camara = new BABYLON.UniversalCamera("camara", new BABYLON.Vector3(0, ALTURA_ADULTO_PIE, -8), scene);
+  // ESTATURA Y OJO DEL PERSONAJE: los de SIEMPRE (5.892 u / ojo 5.35), en TODAS
+  // las clases â€” tambiÃ©n REU-175, desde que las estructuras del salÃ³n de prueba
+  // vienen de Blender a la altura comÃºn de todos los mapas (7/10 tarde). Se fija
+  // ANTES de la cÃ¡mara y de cargar el cuerpo (cargarPersonaje lee la estatura
+  // activa al escalar).
+  alturaOjoActiva = ALTURA_OJO_PROFESOR;
+  fijarAlturaPersonaje(ALTURA_OBJETIVO_BASE);
+
+  // 1. CONFIGURAR LA CÃMARA
+  const camara = new BABYLON.UniversalCamera(
+    "camara",
+    new BABYLON.Vector3(0, SUELO_Y + alturaOjoActiva, -8),
+    scene
+  );
   camara.attachControl(canvas, true);
   camara.speed = 0.35;
   camara.angularSensibility = 5000;
@@ -1019,11 +1230,11 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   camara.keysLeft = [];
   camara.keysRight = [];
 
-  const radioVertical = ALTURA_ADULTO_PIE / 2;
+  const radioVertical = (SUELO_Y + alturaOjoActiva) / 2;
   camara.ellipsoid = new BABYLON.Vector3(0.5, radioVertical, 0.5);
   camara.ellipsoidOffset = new BABYLON.Vector3(0, radioVertical, 0);
-  // La cámara NO colisiona por su cuenta: su posición se copia 1:1 desde el modelo 3D
-  // en cada frame, así que su colisión y su gravedad solo la desalinearían (y cobrarían
+  // La cÃ¡mara NO colisiona por su cuenta: su posiciÃ³n se copia 1:1 desde el modelo 3D
+  // en cada frame, asÃ­ que su colisiÃ³n y su gravedad solo la desalinearÃ­an (y cobrarÃ­an
   // un barrido de colisiones completo por frame sin motivo). El encierro lo resuelven los
   // muros "limite*" + recortarAlSalon().
   camara.checkCollisions = false;
@@ -1033,23 +1244,32 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   const luz = new BABYLON.HemisphericLight("luz", new BABYLON.Vector3(0, 1, 0), scene);
   luz.intensity = 0.9;
 
-  // 2. EL BUCLE DE RENDER ARRANCA YA, con la cámara y la luz listas. Así el
-  //    usuario ve el aula mientras carga (y DETRÁS de la ventana de skin, que
+  // 2. EL BUCLE DE RENDER ARRANCA YA, con la cÃ¡mara y la luz listas. AsÃ­ el
+  //    usuario ve el aula mientras carga (y DETRÃS de la ventana de skin, que
   //    sigue abierta en el panel): antes no se dibujaba nada hasta que
-  //    terminaba de cargar el personaje y se veía una pantalla en blanco.
+  //    terminaba de cargar el personaje y se veÃ­a una pantalla en blanco.
   alRenderizar(scene);
 
   await cargarSalon(scene);
 
-  // TABLERO. El mapa solo aporta la malla y el material que ya midió en su .glb
-  // (el empty "tablero_01"); pdf.js, el vídeo, YouTube y la captura de pantalla
-  // los trae el módulo. Un mapa nuevo no tiene que reescribir nada de esto.
+  // TABLERO. El mapa solo aporta la malla y el material que ya midiÃ³ en su .glb
+  // (el empty "tablero_01"); pdf.js, el vÃ­deo, YouTube y la captura de pantalla
+  // los trae el mÃ³dulo. Un mapa nuevo no tiene que reescribir nada de esto.
   if (pantallaTablero && materialPantalla) {
     tablero = crearTablero({
       pantalla: pantallaTablero,
       material: materialPantalla,
       scene,
       volumen: () => volumenGeneral,
+      // El menÃº "Publicar" se filtra con esto: docente/admin de todo,
+      // estudiante/invitado solo diapositivas y notas.
+      rol: () => obtenerSesion()?.rol ?? "estudiante",
+      // EL TABLERO ES DEL SALÃ“N: lo que uno publica aquÃ­ (PDF, imagen,
+      // YouTube, limpiar) sale hacia la sala por `remotos`. Se lee en el
+      // momento del cierre, asÃ­ que funciona aunque `remotos` se cree
+      // mÃ¡s abajo; sin conexiÃ³n no se manda nada (la red lo resuelve
+      // reenviando cuando alguien entra).
+      alPublicar: (mensaje) => remotos?.publicarTablero(mensaje),
     });
   } else {
     console.warn("Sin malla de tablero en este mapa: no habrá proyección.");
@@ -1060,7 +1280,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   sueloColision.checkCollisions = true;
   sueloColision.isVisible = false;
 
-  // 3. CARGAR EL PERSONAJE 3D. Va DESPUÉS del salón (el aula se ve ya detrás
+  // 3. CARGAR EL PERSONAJE 3D. Va DESPUÃ‰S del salÃ³n (el aula se ve ya detrÃ¡s
   //    de la ventana de skin) y ESPERA a que se cierre esa ventana antes de
   //    leer la skin elegida (esperarSkinPendiente dentro de cargarPersonaje).
   let personaje: Personaje | null = null;
@@ -1068,13 +1288,13 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     personaje = await cargarPersonaje(scene, obtenerSesion()?.rol ?? "estudiante");
     personaje.raiz.position = new BABYLON.Vector3(0, SUELO_Y, -8);
 
-    // CUERPO DE COLISIÓN DEL PERSONAJE (lo que lleva moveWithCollisions).
-    // No usa la geometría del modelo, usa este elipsoide:
+    // CUERPO DE COLISIÃ“N DEL PERSONAJE (lo que lleva moveWithCollisions).
+    // No usa la geometrÃ­a del modelo, usa este elipsoide:
     //   radio (0.55, 2.42, 0.55) + offset (0, 2.73, 0)  =>  ocupa de SUELO_Y+0.31
     //   a SUELO_Y+5.15: el cuerpo entero de 1.85 m (5.892 u), con 0.31 de
     //   holgura bajo el pie para no engancharse en lajas ni cantos.
     // Choca con room y con los muros invisibles "limite*".
-    // Mesas, sillas y atril NO pasan por aquí: los resuelve empujarFueraDeObstaculos()
+    // Mesas, sillas y atril NO pasan por aquÃ­: los resuelve empujarFueraDeObstaculos()
     // porque el motor de colisiones se atasca dentro de las lajas finas (ver ObstaculoSolido).
     personaje.raiz.ellipsoid = new BABYLON.Vector3(0.55, 2.42, 0.55);
     personaje.raiz.ellipsoidOffset = new BABYLON.Vector3(0, 2.73, 0);
@@ -1083,20 +1303,20 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   }
 
   // ---------------------------------------------------------------
-  // FUNCIONALIDADES DEL AVATAR → src/3d/funcionalidades.ts
-  // Caminar, sentarse, presentar en el atril, cámara 1ª/3ª persona y
-  // mano alzada viven en un módulo aparte: aquí solo se guarda la
-  // referencia y se consulta su estado. Se monta más abajo, cuando el
-  // salón ya cargó sus sillas, su atril y sus obstáculos.
+  // FUNCIONALIDADES DEL AVATAR â†’ src/3d/funcionalidades.ts
+  // Caminar, sentarse, presentar en el atril, cÃ¡mara 1Âª/3Âª persona y
+  // mano alzada viven en un mÃ³dulo aparte: aquÃ­ solo se guarda la
+  // referencia y se consulta su estado. Se monta mÃ¡s abajo, cuando el
+  // salÃ³n ya cargÃ³ sus sillas, su atril y sus obstÃ¡culos.
   // ---------------------------------------------------------------
   let func: Funcionalidades;
 
   // -----------------------------------------------------------------------
-  // CLIC EN EL TABLERO DESDE LEJOS → se abre la pantalla en grande para el que
+  // CLIC EN EL TABLERO DESDE LEJOS â†’ se abre la pantalla en grande para el que
   // clica (igual que en framevr.io): el contenido del proyector se ve a pantalla
-  // completa aquí, sin tener que caminar hasta el atril.
-  // Se registra DESPUÉS de declarar `func` porque el handler lo lee y la
-  // función es asíncrona (un clic durante la carga no tendría esa referencia lista).
+  // completa aquÃ­, sin tener que caminar hasta el atril.
+  // Se registra DESPUÃ‰S de declarar `func` porque el handler lo lee y la
+  // funciÃ³n es asÃ­ncrona (un clic durante la carga no tendrÃ­a esa referencia lista).
   // -----------------------------------------------------------------------
   function clicSobreElTablero(evento: MouseEvent): boolean {
     if (!tablero || !pantallaTablero || func.enElAtril()) return false;
@@ -1106,7 +1326,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     if (!lienzo) return false;
 
     // Con el puntero bloqueado no hay cursor que seguir: se apunta al centro de la
-    // pantalla, que es exactamente donde está la mirada del jugador.
+    // pantalla, que es exactamente donde estÃ¡ la mirada del jugador.
     const bloqueado = document.pointerLockElement === lienzo;
     const rect = lienzo.getBoundingClientRect();
     const x = bloqueado ? lienzo.clientWidth / 2 : evento.clientX - rect.left;
@@ -1115,8 +1335,8 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     const golpe = scene.pick(x, y);
     if (!golpe?.hit || !golpe.pickedPoint) return false;
 
-    // La pizarra es un plano finísimo clavado en la pared: comparar contra su AABB
-    // tal cual no daría con la cara de la pizarra real del .glb, así que se ensancha
+    // La pizarra es un plano finÃ­simo clavado en la pared: comparar contra su AABB
+    // tal cual no darÃ­a con la cara de la pizarra real del .glb, asÃ­ que se ensancha
     // (muy en X, que es el eje normal a la pared) y un poco en alto y fondo.
     pantallaTablero.computeWorldMatrix(true);
     const caja = pantallaTablero.getBoundingInfo().boundingBox;
@@ -1135,10 +1355,10 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   }
 
   // Se registra con nombre para poder desmontarlo al salir de la partida
-  // (si no, al volver a entrar se duplicarían los listeners).
+  // (si no, al volver a entrar se duplicarÃ­an los listeners).
   const alHacerClickEnCanvas = (evento: MouseEvent) => {
-    // Mientras se escribe en la pizarra el ratón NO se bloquea: si no, el trazo
-    // se cortaría en cuanto se cliqu fuera del lienzo.
+    // Mientras se escribe en las notas el ratÃ³n NO se bloquea: el clic tiene
+    // que llegar al textarea para colocar el cursor donde toca.
     if (tablero?.dibujoAbierto()) return;
     if (clicSobreElTablero(evento)) return;
     canvas.requestPointerLock();
@@ -1146,19 +1366,20 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   canvas.addEventListener("click", alHacerClickEnCanvas);
   limpiadoresDePartida.push(() => canvas.removeEventListener("click", alHacerClickEnCanvas));
 
-  // UI de ESTA partida (archivos aparte en src/ui/): se guardan aquí para que
+  // UI de ESTA partida (archivos aparte en src/ui/): se guardan aquÃ­ para que
   // tanto el teclado como el bucle de render manden lo mismo a los botones.
   let barra: BarraUsuario | null = null;
   let menuAjustes: MenuAjustes | null = null;
   let camaraWeb: CamaraWeb | null = null;
+  let videoSalon: VideoSalon | null = null;
 
   // -----------------------------------------------------------------------
-  // FUNCIONALIDADES → src/3d/funcionalidades.ts
+  // FUNCIONALIDADES â†’ src/3d/funcionalidades.ts
   // Caminar (WASD + colisiones), sentarse (E), presentar en el atril (R),
-  // cámara 1ª/3ª persona (B) y mano alzada (H) viven en un módulo aparte:
-  // aquí solo se le entrega el mundo de ESTE mapa (escena, sillas, atril,
-  // obstáculos y sus reglas de colisión) y se cablea una sola vez. Un mapa
-  // nuevo repite estas líneas y reutiliza todo sin reescribirlo.
+  // cÃ¡mara 1Âª/3Âª persona (B) y mano alzada (H) viven en un mÃ³dulo aparte:
+  // aquÃ­ solo se le entrega el mundo de ESTE mapa (escena, sillas, atril,
+  // obstÃ¡culos y sus reglas de colisiÃ³n) y se cablea una sola vez. Un mapa
+  // nuevo repite estas lÃ­neas y reutiliza todo sin reescribirlo.
   // -----------------------------------------------------------------------
   func = crearFuncionalidades({
     escena: scene,
@@ -1176,15 +1397,21 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     avisoMano,
     limpiadores: limpiadoresDePartida,
     radioPersonaje: RADIO_PERSONAJE,
-    alturaOjoProfesor: ALTURA_OJO_PROFESOR,
+    alturaOjoProfesor: alturaOjoActiva,
     alCambiarEstado: () => reflejarBarra(),
-    alActualizarTablero: (silueta) => tablero?.actualizar(silueta),
+    alActualizarTablero: (silueta) => {
+      tablero?.actualizar(silueta);
+      // VISTA DEL PRESENTADOR: mientras se estÃ¡ en el atril, la pantallita
+      // inferior izquierda repite la pizarra (que queda a las espaldas) para
+      // no tener que dejar de mirar a la clase.
+      tablero?.vistaPresentador(func.enElAtril());
+    },
     alSalirDelAtril: () => tablero?.cerrarMenu(),
   });
 
   // -----------------------------------------------------------------------
-  // ESTADO → BARRA. El estado del avatar (sentado, tercera persona, mano…)
-  // lo tiene funcionalidades.ts; aquí solo se pinta en la barra de usuario.
+  // ESTADO â†’ BARRA. El estado del avatar (sentado, tercera persona, manoâ€¦)
+  // lo tiene funcionalidades.ts; aquÃ­ solo se pinta en la barra de usuario.
   // -----------------------------------------------------------------------
   function reflejarBarra(): void {
     if (!barra) return;
@@ -1201,18 +1428,20 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   }
 
   // -----------------------------------------------------------------------
-  // PRESENCIA: LOS DEMÁS MIEMBROS DE LA CLASE
+  // PRESENCIA: LOS DEMÃS MIEMBROS DE LA CLASE
   // (src/3d/avataresRemotos.ts dibuja y mueve los cuerpos; src/red/presencia.ts
-  // habla con el servidor y filtra qué se envía). Aquí solo se le pasa el estado
-  // del avatar local y se pinta lo que llega en la píldora de conectados.
+  // habla con el servidor y filtra quÃ© se envÃ­a). AquÃ­ solo se le pasa el estado
+  // del avatar local y se pinta lo que llega en la pÃ­ldora de conectados.
   // -----------------------------------------------------------------------
   let listado: ListadoConectados | null = null;
   let remotos: AvataresRemotos | null = null;
+  /** Ids de socket vistos en la Ãºltima lista: para detectar quiÃ©n ENTRA. */
+  const conocidos = new Set<string>();
 
   /**
-   * Lo que se publica de MI avatar: dónde estoy y qué estoy haciendo.
-   * El rumbo se toma de la cámara, que es la que mira a dónde andas (la cámara
-   * va pegada al cuerpo en 3ª persona y por encima de los ojos en 1ª).
+   * Lo que se publica de MI avatar: dÃ³nde estoy y quÃ© estoy haciendo.
+   * El rumbo se toma de la cÃ¡mara, que es la que mira a dÃ³nde andas (la cÃ¡mara
+   * va pegada al cuerpo en 3Âª persona y por encima de los ojos en 1Âª).
    */
   function estadoLocal(): EstadoLocal {
     const pos = personaje?.raiz.position ?? new BABYLON.Vector3(0, SUELO_Y, -8);
@@ -1221,15 +1450,18 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       x: pos.x,
       y: pos.y,
       z: pos.z,
-      yaw: camara.rotation.y,
+      // El rumbo del CUERPO, no el de la cámara: sentado o en el atril la
+      // cámara gira con la mirada y publicarla haría girar el avatar ante los
+      // demás (el cuerpo, en cambio, queda fijo mirando al frente).
+      yaw: estado.rumbo,
       sentado: estado.sentado,
       enAtril: func.enElAtril(),
       manoAlzada: estado.manoAlzada,
     };
   }
 
-  // La píldora se crea antes que la presencia: así, el primer mensaje del
-  // servidor (que puede llegar en el mismo frame) ya tiene dónde pintarse.
+  // La pÃ­ldora se crea antes que la presencia: asÃ­, el primer mensaje del
+  // servidor (que puede llegar en el mismo frame) ya tiene dÃ³nde pintarse.
   listado = crearListadoConectados(claseActiva);
 
   remotos = crearAvataresRemotos({
@@ -1240,11 +1472,32 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     estadoLocal,
     alCambiarParticipantes: (participantes: Participante[], miId: string | null) => {
       listado?.reflejar(participantes, miId);
+
+      // El id propio de socket llega (o se confirma tras reconexión) aquí:
+      // el video de salón lo necesita para no crearse un par consigo mismo
+      // y para saber si una oferta entrante es un "glare" (perfect negotiation).
+      if (miId) videoSalon?.fijarId(miId);
+      videoSalon?.actualizarParticipantes(participantes.map((p) => p.id));
+
+      // Si ENTRA alguien a la clase y aquÃ­ hay algo en el tablero, se le
+      // reenvÃ­a al momento: quien llega ve lo que se estÃ¡ presentando sin
+      // tener que pedir nada. Sin `miId` (primer aviso, aÃºn sin confirmar
+      // la entrada) no se manda: asÃ­, tras una reconexiÃ³n, manda el que
+      // sigue en la sala con lo mÃ¡s fresco, no el que vuelve con lo suyo
+      // de antes. Lo mismo hace el otro lado al verME entrar a mÃ­.
+      const otros = new Set(participantes.filter((p) => p.id !== miId).map((p) => p.id));
+      let entraAlguien = false;
+      for (const id of otros) {
+        if (!conocidos.has(id)) entraAlguien = true;
+        conocidos.add(id);
+      }
+      for (const id of [...conocidos]) if (!otros.has(id)) conocidos.delete(id);
+      if (entraAlguien && miId) tablero?.republicarContenido();
     },
     alCambiarConexion: (estado, detalle) => {
       listado?.reflejarConexion(estado, detalle);
-      // La lista puede llegar antes que la confirmación de entrada, así que el
-      // "(tú)" no siempre sale en la primera pintada: al conectar se repinta.
+      // La lista puede llegar antes que la confirmaciÃ³n de entrada, asÃ­ que el
+      // "(tÃº)" no siempre sale en la primera pintada: al conectar se repinta.
       if (estado === "conectado") {
         listado?.reflejar(remotos?.participantes() ?? [], remotos?.miId() ?? null);
       }
@@ -1254,47 +1507,76 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       barra?.mostrarGlobo(motivo);
     },
     alAlzarMano: (nombre) => {
-      // "Alguien levantó la mano" sale en la burbuja de la barra (la misma
-      // que los mensajes de cámara/micro): avisa a todos los de la clase.
+      // "Alguien levantÃ³ la mano" sale en la burbuja de la barra (la misma
+      // que los mensajes de cÃ¡mara/micro): avisa a todos los de la clase.
       barra?.mostrarGlobo(t("mano.aviso", { nombre }));
+    },
+    alRecibirTablero: (mensaje) => {
+      // Lo que otro publicÃ³ en la pizarra se pinta en la MÃA: mismo salÃ³n,
+      // misma pantalla. El tablero aplica sin reenviar (sin eco).
+      tablero?.aplicarMensaje(mensaje);
     },
     limpiadores: limpiadoresDePartida,
   });
 
   // -----------------------------------------------------------------------
-  // SALIR DE LA CLASE / PARTIDA → vuelve al panel con el que iniciaste sesión
+  // VIDEO SALÓN: la webcam de quien presenta, como cuadrito junto a su avatar
+  // (src/red/videoSalon.ts). Usa el mismo socket que la presencia para la
+  // señalización WebRTC; el flujo de vídeo va P2P entre navegadores.
+  // -----------------------------------------------------------------------
+  videoSalon = crearVideoSalon({
+    escena: scene,
+    signaling: {
+      emitir: (evento, datos) => remotos?.emitirSignaling(evento, datos),
+      escuchar: (evento, fn) => remotos?.escucharSignaling(evento, fn) ?? (() => {}),
+    },
+    obtenerFlujoLocal: () => camaraWeb?.obtenerFlujo() ?? null,
+    posicionCabeza: (id) => remotos?.posicionCabeza(id) ?? null,
+    anchoEtiqueta: () => remotos?.anchoEtiqueta() ?? 4.4,
+    nombreDe: (id) => remotos?.nombreDe(id) ?? "",
+    limpiadores: limpiadoresDePartida,
+  });
+
+  // El id propio de socket hace falta para el perfect negotiation (no
+  // crear un par consigo mismo y saber si una oferta entrante es glare).
+  const idSocketPropio = remotos?.miId();
+  if (idSocketPropio) videoSalon.fijarId(idSocketPropio);
+
+  // -----------------------------------------------------------------------
+  // SALIR DE LA CLASE / PARTIDA â†’ vuelve al panel con el que iniciaste sesiÃ³n
   // -----------------------------------------------------------------------
   function salirDeLaPartida(): void {
     engine.stopRenderLoop();
 
     menuAjustes?.destruir();
     barra?.destruir();
-    // La webcam también: si no, el piloto de la cámara seguiría encendido.
+    // La webcam tambiÃ©n: si no, el piloto de la cÃ¡mara seguirÃ­a encendido.
     camaraWeb?.destruir();
     listado?.destruir();
-    // Retira también el menú del tablero y, sobre todo, PARA la captura de
-    // pantalla: si no, el navegador seguiría grabando tras salir de la clase.
+    // Retira tambiÃ©n el menÃº del tablero y, sobre todo, PARA la captura de
+    // pantalla: si no, el navegador seguirÃ­a grabando tras salir de la clase.
     tablero?.destruir();
     menuAjustes = null;
     barra = null;
     tablero = null;
     camaraWeb = null;
+    videoSalon = null;
     listado = null;
     remotos = null;
 
-    // Mano alzada, su temporizador y los avisos: los limpia el módulo de
-    // funcionalidades, el mismo que los cableó al entrar en la clase.
+    // Mano alzada, su temporizador y los avisos: los limpia el mÃ³dulo de
+    // funcionalidades, el mismo que los cableÃ³ al entrar en la clase.
     func.destruir();
 
-    // Sin esto, al volver a entrar se registrarían listeners encima de otros.
+    // Sin esto, al volver a entrar se registrarÃ­an listeners encima de otros.
     for (const limpiar of limpiadoresDePartida.splice(0)) limpiar();
 
     liberarMicrofono();
     if (document.pointerLockElement) document.exitPointerLock();
 
-    // La clase se borra de la dirección: si no, al volver al panel y pulsar
-    // otra vez en la misma clase, entraría por el enlace viejo en vez de por
-    // el botón. El enlace se vuelve a escribir al entrar (ver entrarAlSalon).
+    // La clase se borra de la direcciÃ³n: si no, al volver al panel y pulsar
+    // otra vez en la misma clase, entrarÃ­a por el enlace viejo en vez de por
+    // el botÃ³n. El enlace se vuelve a escribir al entrar (ver entrarAlSalon).
     escribirClaseEnLaUrl(null);
     claseActiva = "";
 
@@ -1329,6 +1611,9 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       void (async () => {
         const estado = await camaraWeb?.alternar();
         reflejarBarra();
+        // Publica el estado a la sala y, si se encendió, ofrece el flujo
+        // P2P a los presentes (los demás ven el cuadrito junto al avatar).
+        videoSalon?.publicarEstadoCamara(estado === "encendida");
         if (estado === "encendida") barra?.mostrarGlobo("Cámara encendida");
         else if (estado === "apagada") barra?.mostrarGlobo("Cámara apagada");
         else if (estado === "sin-permiso") barra?.mostrarGlobo("Sin permiso de cámara");
@@ -1369,12 +1654,12 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       return;
     }
 
-    // Etapa del chat por proximidad: aquí se reenvía `detalle` al resto de la
+    // Etapa del chat por proximidad: aquÃ­ se reenvÃ­a `detalle` al resto de la
     // partida. De momento solo lo ve el propio jugador (lo pinta la barra).
     if (accion === "emote") {
       console.log("Emote:", detalle);
-      // 👋 además de pintarse en la barra, mueve el brazo del personaje 3.5 s.
-      if (detalle === "👋") func.saludar();
+      // ðŸ‘‹ ademÃ¡s de pintarse en la barra, mueve el brazo del personaje 3.5 s.
+      if (detalle === "ðŸ‘‹") func.saludar();
     }
   }
 
@@ -1382,6 +1667,11 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   // TECLADO
   // -----------------------------------------------------------------------
   const manejarTeclado = (evento: KeyboardEvent): void => {
+    // MIENTRAS SE ESCRIBE EN LAS NOTAS las teclas son del TEXTO (b, r, â†,
+    // espacio, Suprâ€¦): no se dispara ningÃºn atajo de la sala. Esc sÃ­, porque
+    // es la tecla que cierra el editor.
+    if (tablero?.dibujoAbierto() && evento.key !== "Escape") return;
+
     const tecla = evento.key.toLowerCase();
 
     if (tecla === "b") func.alternarCamara();
@@ -1389,7 +1679,9 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     if (tecla === "e") func.alternarSentado();
     if (tecla === "h") func.alternarMano();
 
-    if (tecla === "p" && func.enElAtril()) {
+    // P abre el menÃº del tablero estando en el atril o acercÃ¡ndose a Ã©l:
+    // quien se pone delante de la pizarra quiere publicar, con o sin R.
+    if (tecla === "p" && (func.enElAtril() || func.estado().cercaDelAtril)) {
       tablero?.abrirMenu();
     }
 
@@ -1402,7 +1694,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
         // Se termina de escribir pero lo escrito se queda en la pizarra.
         tablero.terminarDeEscribir();
       } else {
-        // Esc también libera el puntero: es la única forma de volver a poder
+        // Esc tambiÃ©n libera el puntero: es la Ãºnica forma de volver a poder
         // clicar los botones de la barra y el engranaje de ajustes.
         menuAjustes?.alternar();
       }
@@ -1416,7 +1708,11 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       tablero?.alternarPausa();
     }
 
-    if (func.enElAtril() && (evento.key === "Delete" || evento.key === "Backspace")) {
+    // Limpiar el tablero compartido solo lo hace el equipo docente: un
+    // estudiante no borra en mitad de una clase lo que estÃ¡ presentando otro.
+    const rol = obtenerSesion()?.rol;
+    const puedeLimpiar = rol === "docente" || rol === "admin";
+    if (func.enElAtril() && puedeLimpiar && (evento.key === "Delete" || evento.key === "Backspace")) {
       tablero?.limpiar();
     }
   };
@@ -1425,7 +1721,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   limpiadoresDePartida.push(() => window.removeEventListener("keydown", manejarTeclado));
 
   // -----------------------------------------------------------------------
-  // UI MODULAR (src/ui/): menú de ajustes ⚙️ y barra de usuario.
+  // UI MODULAR (src/ui/): menÃº de ajustes âš™ï¸ y barra de usuario.
   // Son archivos aparte con una responsabilidad fija: cualquier otro mapa los
   // importa y funciona igual, sin reescribir botones.
   // -----------------------------------------------------------------------
@@ -1441,14 +1737,14 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     alSalirDeLaClase: salirDeLaPartida,
   });
 
-  // Se crea ANTES de la barra: reflejarBarra() se ejecuta nada más montarla y
-  // necesita saber si la webcam está encendida.
+  // Se crea ANTES de la barra: reflejarBarra() se ejecuta nada mÃ¡s montarla y
+  // necesita saber si la webcam estÃ¡ encendida.
   camaraWeb = crearCamaraWeb(() => reflejarBarra());
 
   barra = crearBarraUsuario({ alPulsar: manejarAccionBarra });
   reflejarBarra();
 
-  // Hook de depuración: en la consola del navegador (F12) puedes inspeccionar
+  // Hook de depuraciÃ³n: en la consola del navegador (F12) puedes inspeccionar
   // la escena con __metaverso.camara / __metaverso.personaje
   (window as unknown as Record<string, unknown>).__metaverso = { camara, personaje, escena: scene };
 
@@ -1457,8 +1753,8 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
 
 function entrarAlSalon(clase: Clase) {
   claseActiva = clase.codigo;
-  // La dirección pasa a ser la de esta clase: es lo que permite copiar el
-  // enlace del navegador y pasárselo a otro para que entre a la MISMA.
+  // La direcciÃ³n pasa a ser la de esta clase: es lo que permite copiar el
+  // enlace del navegador y pasÃ¡rselo a otro para que entre a la MISMA.
   escribirClaseEnLaUrl(clase.codigo);
 
   const alRedimensionar = () => engine.resize();
@@ -1474,12 +1770,12 @@ function entrarAlSalon(clase: Clase) {
 }
 
 // -----------------------------------------------------------------------
-// ENTRAR POR ENLACE  →  http://localhost:5173/?clase=FIS-101
+// ENTRAR POR ENLACE  â†’  http://localhost:5173/?clase=FIS-101
 // -----------------------------------------------------------------------
-// Si la dirección trae el código de una clase, se entra directamente en ella
-// en lugar de mostrar el panel. Se pregunta a la API de qué clase se trata (el
-// código solo no dice ni la materia ni el docente) y se entra. Devuelve false
-// si no había enlace o la clase ya no existe, para que el llamante abra el
+// Si la direcciÃ³n trae el cÃ³digo de una clase, se entra directamente en ella
+// en lugar de mostrar el panel. Se pregunta a la API de quÃ© clase se trata (el
+// cÃ³digo solo no dice ni la materia ni el docente) y se entra. Devuelve false
+// si no habÃ­a enlace o la clase ya no existe, para que el llamante abra el
 // panel con normalidad.
 async function entrarPorEnlace(): Promise<boolean> {
   const codigo = leerClaseDeLaUrl();
@@ -1493,12 +1789,12 @@ async function entrarPorEnlace(): Promise<boolean> {
   }
 
   if (!clase) {
-    aviso.textContent = `La clase ${codigo} no existe o el servidor no está disponible.`;
+    aviso.textContent = `La clase ${codigo} no existe o el servidor no estÃ¡ disponible.`;
     aviso.style.display = "block";
     window.setTimeout(() => {
       aviso.style.display = "none";
     }, 4000);
-    // Se quita el enlace de la dirección para no repetir el error al recargar.
+    // Se quita el enlace de la direcciÃ³n para no repetir el error al recargar.
     escribirClaseEnLaUrl(null);
     return false;
   }
@@ -1507,8 +1803,8 @@ async function entrarPorEnlace(): Promise<boolean> {
   return true;
 }
 
-// Si no hay sesión se pide el login primero, y solo después se mira el enlace:
-// así un enlace recibido por WhatsApp funciona aunque no se esté conectado.
+// Si no hay sesiÃ³n se pide el login primero, y solo despuÃ©s se mira el enlace:
+// asÃ­ un enlace recibido por WhatsApp funciona aunque no se estÃ© conectado.
 async function arrancar(): Promise<void> {
   const sesion = obtenerSesion();
   if (!sesion) {

@@ -206,7 +206,7 @@ function clasificar(m: Metricas, refDePie: number): TipoClip {
 // ---------------------------------------------------------------
 
 /** `mixamorig9:Hips` / `mixamorig12:Hips.001` / `Hips` → `hips`. */
-function normalizarNombre(n: string): string {
+export function normalizarNombre(n: string): string {
   return n.replace(/^mixamorig\d*:?/i, "").replace(/\.\d+$/, "").toLowerCase();
 }
 

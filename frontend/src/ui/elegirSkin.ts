@@ -3,8 +3,9 @@
  * ---------------------------------------
  * Antes de entrar a la clase, el usuario elige entre las 2 skins de SU rol
  * (estudiante: mujer/hombre · docente: mujer/hombre · admin: mujer/hombre).
- * La elección se guarda en localStorage (estado.ts → guardarGeneroAvatar) y
- * la lee personaje.ts al cargar el modelo 3D dentro del salón.
+ * La elección se guarda por pestaña y en localStorage (estado.ts →
+ * guardarGeneroAvatar) y la lee personaje.ts al cargar el modelo 3D:
+ * así dos pestañas con cuentas distintas pueden llevar skins distintas.
  *
  *   void elegirSkin(cuenta.rol);   // no hace falta esperarla: ver abajo
  *

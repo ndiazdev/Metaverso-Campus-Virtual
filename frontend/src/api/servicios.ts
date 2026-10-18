@@ -1,7 +1,7 @@
 import { API_URL } from "./cliente";
 
-export async function obtenerClasesDocente(docenteId: number) {
-  const res = await fetch(`${API_URL}/clases/docente/${docenteId}`);
+export async function obtenerClasesDocente(docenteCorreo: string) {
+  const res = await fetch(`${API_URL}/clases/docente/${encodeURIComponent(docenteCorreo)}`);
   return await res.json();
 }
 
@@ -14,16 +14,16 @@ export async function crearClaseBD(datosClase: any) {
   return await res.json();
 }
 
-export async function obtenerClasesEstudiante(estudianteId: number) {
-  const res = await fetch(`${API_URL}/clases/estudiante/${estudianteId}`);
+export async function obtenerClasesEstudiante(estudianteCorreo: string) {
+  const res = await fetch(`${API_URL}/clases/estudiante/${encodeURIComponent(estudianteCorreo)}`);
   return await res.json();
 }
 
-export async function inscribirClaseBD(estudianteId: number, codigoClase: string) {
+export async function inscribirClaseBD(correoEstudiante: string, codigoClase: string) {
   const res = await fetch(`${API_URL}/inscripciones`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ estudianteId, codigoClase }),
+    body: JSON.stringify({ correoEstudiante, codigoClase }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error);

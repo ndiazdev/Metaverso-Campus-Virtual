@@ -19,6 +19,13 @@ export const FUENTE_MONO =
 export const LOGO_URL =
   "https://campusvirtual.santototunja.edu.co/assets/Copia-de-FInal-Logo-campusprueba2-2-1-scaled-CAabIrYv.png";
 
+// Versión en blanco del mismo logo (archivo local en public/images). Se usa
+// cuando el front está en TEMA OSCURO: la institucional de color es oscura y
+// sobre fondo oscuro no se lee. Quién decide cuál de las dos se ve es el CSS,
+// según <html data-tema="oscuro"> —no se lee el tema en JS—, para que el
+// cambio de tema desde Ajustes actualice el logo al instante, sin repintar.
+export const LOGO_OSCURO_URL = "/images/Logo_Blanco2.png";
+
 
 // ============================================================
 // ESTILOS
@@ -99,6 +106,15 @@ export const ESTILOS_COMUNES = `
     width: auto;
     display: block;
   }
+
+  /* Tema oscuro: la marca de color (externa, oscura) se cambia por la versión
+     blanca local. En claro solo se ve la de color y en oscuro solo la blanca:
+     la regla que MUESTRA la blanca va DESPUÉS de la que oculta la de color,
+     porque ambas tienen la misma especificidad. Las dos <img> comparten la
+     clase .dash-marca-logo, así que miden igual también en el responsive. */
+  .dash-marca-logo-blanco { display: none; }
+  :root[data-tema="oscuro"] .dash-marca-logo { display: none; }
+  :root[data-tema="oscuro"] .dash-marca-logo-blanco { display: block; }
 
   .dash-nav-etiqueta {
     font-size: 10px;
@@ -851,7 +867,7 @@ export const ESTILOS_COMUNES = `
 
   .dash-fila-usuario {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 176px;
+    grid-template-columns: minmax(0, 1fr) 176px auto;
     gap: 16px;
     align-items: center;
     padding: 11px 14px;
@@ -990,6 +1006,91 @@ export const ESTILOS_COMUNES = `
   }
 
   .dash-select-rol:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  /* ---------------------------------------------------------
+     CRUD DE USUARIOS: barra de crear + iconos editar/eliminar
+     --------------------------------------------------------- */
+
+  .dash-lista-acciones {
+    display: flex;
+    justify-content: flex-end;
+    margin: 0 0 10px 0;
+  }
+
+  .dash-lista-acciones .dash-boton-principal {
+    width: auto;
+  }
+
+  .dash-usuario-acciones {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+
+  /* Acciones (editar/eliminar) dentro de las tablas de clases e
+     inscripciones: mismo look que las de la lista de usuarios. */
+  .dash-tabla-acciones {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+  }
+
+  .dash-boton-icono {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    border: 1px solid var(--c-borde);
+    border-radius: 7px;
+    background: var(--c-superficie);
+    color: var(--c-texto-suave);
+    font-size: 12px;
+    cursor: pointer;
+    transition: background 0.15s ease, border-color 0.15s ease,
+      color 0.15s ease;
+  }
+
+  .dash-boton-icono:hover {
+    background: var(--c-acento);
+    border-color: var(--c-acento);
+    color: var(--c-texto-boton);
+  }
+
+  .dash-boton-icono.peligro:hover {
+    background: var(--c-error);
+    border-color: var(--c-error);
+    color: #fff;
+  }
+
+  .dash-boton-peligro-solido {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    width: 100%;
+    padding: 11px 16px;
+    border: 1px solid var(--c-error);
+    border-radius: 8px;
+    background: var(--c-error);
+    color: #fff;
+    font-family: inherit;
+    font-size: 13.5px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+    cursor: pointer;
+    transition: filter 0.15s ease;
+  }
+
+  .dash-boton-peligro-solido:hover:not(:disabled) {
+    filter: brightness(0.92);
+  }
+
+  .dash-boton-peligro-solido:disabled {
     opacity: 0.5;
     cursor: default;
   }
@@ -1751,6 +1852,10 @@ export const ESTILOS_COMUNES = `
     }
 
     .dash-usuario-rol {
+      justify-content: flex-start;
+    }
+
+    .dash-usuario-acciones {
       justify-content: flex-start;
     }
 

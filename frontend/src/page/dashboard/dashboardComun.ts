@@ -5,7 +5,7 @@ import { API_URL } from "../../api/cliente";
 
 import "@fortawesome/fontawesome-free/css/all.min.css";
 
-import { LOGO_URL, inyectarEstilosDashboard } from "./dashboardEstilos";
+import { LOGO_URL, LOGO_OSCURO_URL, inyectarEstilosDashboard } from "./dashboardEstilos";
 import {
   actualizarPreferencia,
   inyectarTema,
@@ -190,6 +190,14 @@ export function crearDashboardComun(
         <img
           class="dash-marca-logo"
           src="${LOGO_URL}"
+          alt="${t("comun.universidad")}"
+        />
+        <!-- Misma marca en blanco: es la que se ve en tema oscuro (la de color
+             es oscura y sobre fondo oscuro no se lee). Cuál se muestra lo
+             decide el CSS con <html data-tema>. -->
+        <img
+          class="dash-marca-logo dash-marca-logo-blanco"
+          src="${LOGO_OSCURO_URL}"
           alt="${t("comun.universidad")}"
         />
       </div>

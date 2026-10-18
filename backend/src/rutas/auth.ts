@@ -8,8 +8,10 @@
 
 import { Router } from "express";
 import bcrypt from "bcrypt";
+import jwt from "jsonwebtoken";
 import { db } from "../db";
 import { detectarRolPorCorreo } from "../roles";
+import { ENTORNO } from "../entorno";
 
 export const rutasAuth = Router();
 
@@ -56,8 +58,15 @@ rutasAuth.post("/login", async (req, res) => {
 
     delete cuenta.contrasena_hash;
 
+    const token = jwt.sign(
+      { correo: cuenta.correo, rol: cuenta.rol, id: cuenta.id },
+      ENTORNO.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+
     return res.json({
       cuenta,
+      token,
     });
   } catch (error) {
     console.error("--- ERROR DE BASE DE DATOS (login) ---");
@@ -123,8 +132,15 @@ rutasAuth.post("/registro", async (req, res) => {
       materia: materia || null,
     };
 
+    const token = jwt.sign(
+      { correo: cuenta.correo, rol: cuenta.rol, id: cuenta.id },
+      ENTORNO.JWT_SECRET,
+      { expiresIn: "8h" }
+    );
+
     return res.status(201).json({
       cuenta,
+      token,
     });
   } catch (error) {
     console.error("--- ERROR DE BASE DE DATOS (registro) ---");

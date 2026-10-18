@@ -49,13 +49,16 @@ export type GeneroAvatar = "mujer" | "hombre";
 
 const CLAVE_AVATAR = "usta_metaverso_avatar";
 
-/** Preferencia guardada; "mujer" la primera vez. */
+/** Preferencia guardada; "mujer" la primera vez.
+ *  Igual que la sesión: primero la de ESTA pestaña (así dos pestañas con
+ *  cuentas distintas pueden llevar skins distintas) y si no, la compartida. */
 export function obtenerGeneroAvatar(): GeneroAvatar {
-  const guardado = localStorage.getItem(CLAVE_AVATAR);
+  const guardado = sessionStorage.getItem(CLAVE_AVATAR) ?? localStorage.getItem(CLAVE_AVATAR);
   return guardado === "hombre" ? "hombre" : "mujer";
 }
 
 export function guardarGeneroAvatar(genero: GeneroAvatar): void {
+  sessionStorage.setItem(CLAVE_AVATAR, genero);
   localStorage.setItem(CLAVE_AVATAR, genero);
 }
 
@@ -137,8 +140,19 @@ export function inscribirEstudiante(codigo: string, correoEstudiante: string): b
  * muestra es el de la cuenta con la que entraste, aunque esa cuenta venga del
  * backend (API) y no exista en el localStorage local.
  *
- * El backend todavía no emite JWT: cuando lo haga, el mismo objeto lo guarda
- * en `token` y aquí queda listo para reenviarlo en los `fetch`.
+ * El login guarda aquí el JWT que emite el backend; api/cliente.ts lo
+ * reenvía en la cabecera Authorization de cada fetch a la API.
+ *
+ * DÓNDE SE GUARDA (y por qué, en dos sitios): en `sessionStorage` (propio de
+ * ESTA pestaña) y en `localStorage` (compartido por todo el navegador). Se
+ * LEE primero el de la pestaña, así que dos pestañas abiertas a la vez
+ * pueden entrar a la misma clase como dos usuarios distintos (probar el
+ * salón con varias cuentas): antes las dos peleaban por la misma clave de
+ * localStorage y las dos entraban con el último correo logueado. Una pestaña
+ * nueva —o el navegador reabierto, donde no hay sessionStorage— toma la de
+ * localStorage, así que la sesión sigue sobreviviendo al cierre. Al duplicar
+ * una pestaña el navegador copia su sessionStorage: la copia arranca con la
+ * misma sesión y cambiar de cuenta ahí no toca a la original.
  */
 interface SesionGuardada {
   version: 1;
@@ -146,6 +160,18 @@ interface SesionGuardada {
   cuenta: Cuenta;
   token?: string;
   abiertoEn: string;
+}
+
+/** Lo que hay guardado en la sesión: pestaña primero, navegador después. */
+function leerSesionCruda(): string | null {
+  return sessionStorage.getItem(CLAVE_SESION) ?? localStorage.getItem(CLAVE_SESION);
+}
+
+/** Guarda en la pestaña (identidad de ESTA pestaña) y en el navegador
+ *  (sesión por defecto para pestañas nuevas y para tras reiniciar). */
+function escribirSesionCruda(valor: string): void {
+  sessionStorage.setItem(CLAVE_SESION, valor);
+  localStorage.setItem(CLAVE_SESION, valor);
 }
 
 export function guardarSesion(
@@ -156,7 +182,7 @@ export function guardarSesion(
   const datos: Cuenta | undefined = cuenta ?? buscarCuenta(correo);
   if (!datos) {
     // Sin cuenta completa (no debería pasar): al menos recuerda el correo.
-    localStorage.setItem(CLAVE_SESION, correo);
+    escribirSesionCruda(correo);
     return;
   }
   const sesion: SesionGuardada = {
@@ -166,12 +192,12 @@ export function guardarSesion(
     token,
     abiertoEn: new Date().toISOString(),
   };
-  localStorage.setItem(CLAVE_SESION, JSON.stringify(sesion));
+  escribirSesionCruda(JSON.stringify(sesion));
 }
 
 /** Cuenta de la sesión abierta, o null si no hay sesión. */
 export function obtenerSesion(): Cuenta | null {
-  const crudo = localStorage.getItem(CLAVE_SESION);
+  const crudo = leerSesionCruda();
   if (!crudo) return null;
 
   // Formato viejo: solo el correo en texto plano.
@@ -189,9 +215,9 @@ export function obtenerSesion(): Cuenta | null {
   }
 }
 
-/** Token del backend si existe (pendiente: el API aún no lo emite). */
+/** Token JWT del login; api/cliente.ts lo envía en Authorization. */
 export function obtenerToken(): string | null {
-  const crudo = localStorage.getItem(CLAVE_SESION);
+  const crudo = leerSesionCruda();
   if (!crudo || !crudo.startsWith("{")) return null;
   try {
     const sesion = JSON.parse(crudo) as Partial<SesionGuardada>;
@@ -202,6 +228,9 @@ export function obtenerToken(): string | null {
 }
 
 export function cerrarSesion(): void {
+  // La sesión de ESTA pestaña y la por defecto de las pestañas nuevas
+  // (localStorage). Otras pestañas ya abiertas conservan la suya.
+  sessionStorage.removeItem(CLAVE_SESION);
   localStorage.removeItem(CLAVE_SESION);
 }
 
