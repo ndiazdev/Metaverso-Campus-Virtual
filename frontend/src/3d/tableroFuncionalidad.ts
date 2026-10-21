@@ -41,49 +41,15 @@
 import * as BABYLON from "babylonjs";
 import * as pdfjsLib from "pdfjs-dist";
 import pdfjsWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
-import { homografia, aplicar, invertir, matriz3d, type Punto } from "./homografia";
 import type { MensajeTablero } from "../red/presencia";
 import type { Rol } from "../state/estado";
 
 // Configuración del worker de PDF.js (usado por convertirPdfAImagenes).
 pdfjsLib.GlobalWorkerOptions.workerSrc = pdfjsWorkerUrl;
 
-/**
- * Lo que devuelve `proyectarPantalla`: la caja de la pizarra en pantalla y la
- * homografía que pega el contenido justo sobre sus cuatro esquinas.
- *
- * Sin la homografía el contenido se colocaba en la CAJA del trapecio, que crece
- * y se desplaza a un lado según el ángulo: el vídeo parecía que andaba detrás
- * de la persona en vez de quedarse clavado en la pizarra.
- */
-interface RectPizarra {
-  visible: boolean;
-  x: number;
-  y: number;
-  ancho: number;
-  alto: number;
-  /** Nula cuando la pizarra no se puede pegar (de canto, a medias…). */
-  homografia: number[] | null;
-}
-
-/**
- * Un punto de un cuerpo en coordenadas del MUNDO (p. ej. un hueso del
- * personaje). El mapa se lo pasa a `actualizar()` para que el contenido no
- * tape lo que queda por delante de la pizarra.
- *
- * ¿Por qué hace falta? En 3D la persona pasa por delante del vídeo, pero el
- * <iframe> de YouTube es HTML y el HTML SIEMPRE se pinta encima del canvas: sin
- * este recorte, al mirar de frente el vídeo quedaba encima de la cabeza del
- * personaje. Con la silueta se le abre un agujero con su forma y se ve el
- * personaje por encima, como en el mundo real. (El papel de notas también
- * recorta mientras está proyectado en la pizarra; mientras se escribe no hace
- * falta: ahí es panel de la derecha.)
- */
-export interface PuntoMundo {
-  x: number;
-  y: number;
-  z: number;
-}
+// (Eliminados junto con la proyección 3D: la interfaz `RectPizarra`, el tipo
+//  `PuntoMundo` y la importación de `homografia`/`matriz3d`. Ya nada pegaba
+//  contenido HTML en la pizarra ni recortaba siluetas.)
 
 // ---------------------------------------------------------------------------
 // API pública
@@ -168,14 +134,11 @@ export interface Tablero {
   /** Vuelve a aplicar `opciones.volumen()` a todo lo que suena en el tablero. */
   refrescarVolumen: () => void;
   /**
-   * Llamar en cada frame. Si se pasa un proveedor de siluetas, este se invoca
-   * SOLO cuando hay contenido HTML que recortar (el iframe de YouTube) y debe
-   * devolver las personas cuyos cuerpos van POR DELANTE —la local en 3ª
-   * persona y las remotas, p. ej. el profe en el atril—: con sus contornos se
-   * recorta ese iframe para que nadie quede tapado. Los mapas que no lo usen
-   * pueden llamar `actualizar()` sin argumentos.
+   * Llamar en cada frame. Ya no recibe proveedor de siluetas: nada se pega en
+   * la pizarra 3D (YouTube es caja personal fija, notas panel lateral), así
+   * que no hay contenido HTML que recortar con la forma del cuerpo.
    */
-  actualizar: (proveedorSiluetas?: () => readonly (readonly PuntoMundo[])[] | null) => void;
+  actualizar: () => void;
   /** Retira el menú, el cartel y los inputs del DOM y suelta la captura. */
   destruir: () => void;
 }
@@ -451,12 +414,6 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   let panelActivo = false;
   /** Para no tocar el DOM en cada frame: solo si cambió lo que se muestra. */
   let clavePanel = "";
-  /**
-   * Silueta de lo que queda enfrente de la pizarra (la persona), ya proyectada
-   * a pantalla y reducida a su contorno. Se recalcula en `actualizar()` y la
-   * usa el iframe de YouTube (el papel de notas ya no se recorta).
-   */
-  let siluetaPantalla: Punto[][] = [];
 
   // -------------------------------------------------------------------------
   // Volumen
@@ -570,15 +527,25 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     youtubeActual = idVideo;
     if (pantalla) pantalla.isVisible = false;
 
-    // El contenedor es el que se posiciona sobre el tablero (ver actualizar()).
+    // CAJA PERSONAL FIJA (arriba a la derecha). Ya NO se proyecta en la pizarra
+    // 3D: al pegar el iframe con homografía y recortarlo con la silueta de cada
+    // persona aparecían los "domos" verdes alrededor de los avatares, el frame
+    // se trababa al recalcular la matriz cada vez que alguien se acercaba y, en
+    // geometría degenerada (muy de canto), la matriz se disparaba y crasheaba
+    // la página. Una caja fija no depende de la cámara: se ve igual siempre.
     const contenedor = document.createElement("div");
     contenedor.className = "yt-contenedor";
-    contenedor.style.position = "absolute";
-    contenedor.style.zIndex = "500";
-    contenedor.style.left = "0px";
-    contenedor.style.top = "0px";
-    contenedor.style.width = "1px"; // dimensiones provisionales hasta el primer frame
-    contenedor.style.height = "1px";
+    contenedor.style.position = "fixed";
+    contenedor.style.top = "16px";
+    contenedor.style.right = "16px";
+    contenedor.style.zIndex = "1450";
+    contenedor.style.width = "min(30vw, 380px)";
+    contenedor.style.height = "min(16.875vw, 214px)"; // 16:9 del ancho de arriba
+    contenedor.style.borderRadius = "12px";
+    contenedor.style.overflow = "hidden";
+    contenedor.style.background = "#000";
+    contenedor.style.border = "1px solid rgba(255,255,255,0.22)";
+    contenedor.style.boxShadow = "0 8px 24px rgba(0,0,0,0.5)";
     document.body.appendChild(contenedor);
     contenedorYoutube = contenedor;
 
@@ -589,470 +556,46 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     void montarPlayerYoutube(idVideo, ancla);
   }
 
-  /**
-   * Pizarra proyectada: sus cuatro esquinas en pantalla y la matriz de
-   * perspectiva que hace que el contenido se quede CLAVADO a la pizarra, igual
-   * que si estuviera pintado en la pared. La usa el iframe de YouTube (el
-   * papel de notas ya no se proyecta: es el panel de la derecha).
-   */
-  function proyectarPantalla(): RectPizarra | null {
-    if (!pantalla) return null;
-
-    const camera = scene.activeCamera;
-    if (!camera) return null;
-
-    const oculto: RectPizarra = {
-      visible: false,
-      x: 0,
-      y: 0,
-      ancho: 0,
-      alto: 0,
-      homografia: null,
-    };
-
-    pantalla.computeWorldMatrix(true);
-    const caja = pantalla.getBoundingInfo().boundingBox;
-    const xMedio = (caja.minimumWorld.x + caja.maximumWorld.x) / 2;
-    const yAlto = caja.maximumWorld.y;
-    const yBajo = caja.minimumWorld.y;
-    const zIzquierda = caja.maximumWorld.z;
-    const zDerecha = caja.minimumWorld.z;
-
-    const motor = scene.getEngine();
-    const viewport = camera.viewport.toGlobal(motor.getRenderWidth(), motor.getRenderHeight());
-    const transformMatrix = scene.getTransformMatrix();
-
-    // Orden de las esquinas MIRANDO LA PIZARRA DE FRENTE. Su cara mira a -X y,
-    // con la cabeza arriba, mirando hacia ella la izquierda en pantalla es +Z
-    // (izquierda = arriba × adelante en el sistema zurdó de Babylon): por eso
-    // arriba-izquierda es el extremo de Z grande. Es el mismo orden en el que
-    // están dibujadas las esquinas del <iframe> y del <canvas>, y de ahí sale
-    // la matriz: si el orden se confundiera, el texto saldría del revés.
-    const mundo = [
-      new BABYLON.Vector3(xMedio, yAlto, zIzquierda),
-      new BABYLON.Vector3(xMedio, yAlto, zDerecha),
-      new BABYLON.Vector3(xMedio, yBajo, zDerecha),
-      new BABYLON.Vector3(xMedio, yBajo, zIzquierda),
-    ];
-
-    const puntos: Punto[] = [];
-    for (const vertice of mundo) {
-      const p = BABYLON.Vector3.Project(
-        vertice,
-        BABYLON.Matrix.Identity(),
-        transformMatrix,
-        viewport
-      );
-      // Las CUATRO tienen que estar delante de la cámara: si una se queda
-      // detrás, la pizarra se ve de canto o partida y la matriz saldría
-      // invertida (el contenido parecería perseguir a la persona).
-      if (p.z <= 0 || p.z >= 1) return oculto;
-      puntos.push({ x: p.x, y: p.y });
-    }
-
-    // Caja envolvente: es donde se coloca el elemento (left/top y su tamaño).
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const p of puntos) {
-      minX = Math.min(minX, p.x);
-      minY = Math.min(minY, p.y);
-      maxX = Math.max(maxX, p.x);
-      maxY = Math.max(maxY, p.y);
-    }
-    const ancho = maxX - minX;
-    const alto = maxY - minY;
-    if (!(ancho > 8 && alto > 8)) return oculto;
-
-    // Esquinas encimadas (pizarra casi de canto): la matriz sería degenerada y
-    // el navegador dejaría el contenido por las nubes. Mejor no mostrar nada.
-    for (let i = 0; i < puntos.length; i++) {
-      for (let j = i + 1; j < puntos.length; j++) {
-        if (Math.hypot(puntos[i].x - puntos[j].x, puntos[i].y - puntos[j].y) < 4) {
-          return oculto;
-        }
-      }
-    }
-
-    // Área real del trapecio proyectado (las cuatro esquinas ya vienen en orden
-    // de contorno, así que basta la fórmula del zapatero). Si es ridícula, la
-    // pizarra no se está viendo.
-    let area = 0;
-    for (let i = 0; i < puntos.length; i++) {
-      const a = puntos[i];
-      const b = puntos[(i + 1) % puntos.length];
-      area += a.x * b.y - b.x * a.y;
-    }
-    area = Math.abs(area) / 2;
-    if (area < 400 || area / (ancho * alto) < 0.05) return oculto;
-
-    const origen: Punto[] = [
-      { x: 0, y: 0 },
-      { x: ancho, y: 0 },
-      { x: ancho, y: alto },
-      { x: 0, y: alto },
-    ];
-    const destino = puntos.map((p) => ({ x: p.x - minX, y: p.y - minY }));
-    const matriz = homografia(origen, destino);
-    if (!matriz) return oculto;
-
-    return { visible: true, x: minX, y: minY, ancho, alto, homografia: matriz };
-  }
-
   // -------------------------------------------------------------------------
-  // SILUETA DE LO QUE QUEDA ENFRENTE (la persona)
+  // (Eliminado) PROYECCION 3D + SILUETAS
   //
-  // El canvas de Babylon está debajo del HTML, así que el <iframe> de YouTube
-  // se pinta SIEMPRE encima de todo: al mirar de frente la cabeza quedaba
-  // tapada por el vídeo. La solución es recortar el iframe con la forma del
-  // cuerpo, de modo que por el agujero se ve el canvas (con la persona) y
-  // alrededor el contenido pegado en la pizarra. El papel de notas no entra
-  // aquí: es un panel fijo a la derecha que no tapa la pizarra.
+  // Antes aqui vivian "proyectarPantalla" (la homografia que claba el
+  // contenido en la pizarra) y todo el sistema de siluetas (recorte con la
+  // forma del cuerpo para que la persona se viera por delante). YouTube dejo
+  // de proyectarse (es una caja personal fija arriba a la derecha) y las
+  // notas son un panel lateral: por eso ese subsistema entero -que dibujaba
+  // los "domos" verdes y trababa/crasheaba la pagina al acercarse alguien-
+  // se elimino. Lo que va como TEXTURA en el tablero (PDF, imagenes,
+  // pantalla compartida) lo tapa el motor 3D solo.
   // -------------------------------------------------------------------------
-
-  /**
-   * Proyecta la silueta (un esqueleto: cabeza, hombros, manos, caderas,
-   * rodillas, pies) y devuelve su CONTORNO: el casco convexo de los círculos de
-   * cada punto. El grosor sale de la altura del propio cuerpo, así que funciona
-   * con cualquier escala; en la cabeza se ensancha para cubrir cránea y pelo,
-   * que están por encima del último hueso.
-   */
-  function proyectarSilueta(puntos: readonly PuntoMundo[]): Punto[] | null {
-    if (puntos.length < 6) return null;
-    const camara = scene.activeCamera;
-    if (!camara) return null;
-
-    let yBajo = Infinity;
-    let yAlto = -Infinity;
-    for (const p of puntos) {
-      if (p.y < yBajo) yBajo = p.y;
-      if (p.y > yAlto) yAlto = p.y;
-    }
-    const altura = yAlto - yBajo;
-    if (!(altura > 1)) return null;
-
-    const motor = scene.getEngine();
-    const viewport = camara.viewport.toGlobal(motor.getRenderWidth(), motor.getRenderHeight());
-    const transformMatrix = scene.getTransformMatrix();
-    const derecha = camara.getDirection(BABYLON.Vector3.Right());
-    const fov = (camara as unknown as { fov?: number }).fov ?? 0.8;
-
-    const muestras: Punto[] = [];
-    const PUNTOS_POR_CIRCULO = 12;
-
-    for (const p of puntos) {
-      // Radio en unidades del mundo: más ancho arriba (cránea/pelo).
-      const casiTope = p.y >= yAlto - altura * 0.08;
-      const radio = altura * (casiTope ? 0.14 : 0.05);
-
-      const centro = new BABYLON.Vector3(p.x, p.y, p.z);
-      const q = BABYLON.Vector3.Project(centro, BABYLON.Matrix.Identity(), transformMatrix, viewport);
-      if (q.z <= 0 || q.z >= 1) continue; // detrás de la cámara no hay nada que recortar
-
-      // Radio en PÍXELES: se proyecta un punto a `radio` unidades por la derecha.
-      const borde = BABYLON.Vector3.Project(
-        centro.add(derecha.scale(radio)),
-        BABYLON.Matrix.Identity(),
-        transformMatrix,
-        viewport
-      );
-      let radioPx = borde.z > 0 && borde.z < 1 ? Math.hypot(borde.x - q.x, borde.y - q.y) : 0;
-      if (!(radioPx > 0.5)) {
-        // Respaldo por si el punto auxiliar ha caído tras la cámara: cuántos
-        // píxeles mide una unidad a esa distancia según el ángulo vertical.
-        const distancia = Math.max(0.5, BABYLON.Vector3.Distance(centro, camara.position));
-        radioPx = (radio * viewport.height) / (2 * distancia * Math.tan(Math.max(0.05, fov) / 2));
-      }
-      if (!(radioPx > 0.5)) continue;
-
-      for (let i = 0; i < PUNTOS_POR_CIRCULO; i++) {
-        const angulo = (i / PUNTOS_POR_CIRCULO) * Math.PI * 2;
-        muestras.push({ x: q.x + Math.cos(angulo) * radioPx, y: q.y + Math.sin(angulo) * radioPx });
-      }
-    }
-
-    if (muestras.length < 36) return null;
-
-    const contorno = cascoConvexo(muestras);
-    if (contorno.length < 3) return null;
-
-    // Guarda: si la silueta ocupa casi toda la pantalla, o la cámara está
-    // dentro del cuerpo o los puntos vienen mal. Recortar eso sería abrir un
-    // agujero gigante en el vídeo, así que prefiero no tocar nada.
-    let minX = Infinity;
-    let minY = Infinity;
-    let maxX = -Infinity;
-    let maxY = -Infinity;
-    for (const p of contorno) {
-      if (p.x < minX) minX = p.x;
-      if (p.y < minY) minY = p.y;
-      if (p.x > maxX) maxX = p.x;
-      if (p.y > maxY) maxY = p.y;
-    }
-    if ((maxX - minX) * (maxY - minY) > viewport.width * viewport.height * 0.6) return null;
-
-    return contorno;
-  }
-
-  /** Casco convexo de unos puntos (Andrew monotone chain). */
-  function cascoConvexo(puntos: Punto[]): Punto[] {
-    const ordenados = [...puntos].sort((a, b) => (a.x === b.x ? a.y - b.y : a.x - b.x));
-    if (ordenados.length < 3) return ordenados;
-
-    const cruce = (o: Punto, a: Punto, b: Punto) => (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
-
-    const inferior: Punto[] = [];
-    for (const p of ordenados) {
-      while (inferior.length >= 2 && cruce(inferior[inferior.length - 2], inferior[inferior.length - 1], p) <= 0) {
-        inferior.pop();
-      }
-      inferior.push(p);
-    }
-
-    const superior: Punto[] = [];
-    for (let i = ordenados.length - 1; i >= 0; i--) {
-      const p = ordenados[i];
-      while (superior.length >= 2 && cruce(superior[superior.length - 2], superior[superior.length - 1], p) <= 0) {
-        superior.pop();
-      }
-      superior.push(p);
-    }
-
-    inferior.pop();
-    superior.pop();
-    return inferior.concat(superior);
-  }
-
-  /** Caja del contenido cuando ocupa toda la pantalla (sin perspectiva). */
-  function cajaPantallaCompleta(elemento: HTMLElement): RectPizarra {
-    return {
-      visible: true,
-      x: 0,
-      y: 0,
-      ancho: elemento.offsetWidth || window.innerWidth,
-      alto: elemento.offsetHeight || window.innerHeight,
-      homografia: null,
-    };
-  }
-
-  /**
-   * Abre un agujero con la silueta sobre el contenido HTML, para que lo que
-   * queda por DELANTE de la pizarra se vea por encima del vídeo.
-   *
-   * El recorte va en coordenadas LOCALES del elemento (así lo consume CSS) y el
-   * elemento está deformado con matrix3d: por eso los puntos se deshacen con la
-   * MISMA homografía inversa que ya usa el puntero al escribir sobre la pizarra.
-   */
-  function recortarConSilueta(elemento: HTMLElement, rect: RectPizarra | null): void {
-    const siluetas = siluetaPantalla;
-    const sinRecorte = () => {
-      if (elemento.style.clipPath) elemento.style.clipPath = "";
-    };
-
-    if (!rect || !rect.visible || siluetas.length === 0) {
-      sinRecorte();
-      return;
-    }
-
-    const inversa = rect.homografia ? invertir(rect.homografia) : null;
-    const holgura = 4;
-    const locales: Punto[][] = [];
-
-    // Cada persona delante de la pizarra abre SU propio agujero (la local y
-    // las remotas): un único casco combinado dejaría un hueco enorme entre
-    // dos personas separadas.
-    for (const silueta of siluetas) {
-      if (silueta.length < 3) continue;
-
-      // Si ni siquiera se cruza con la caja del contenido, no hace falta tocar nada.
-      let minX = Infinity;
-      let minY = Infinity;
-      let maxX = -Infinity;
-      let maxY = -Infinity;
-      for (const p of silueta) {
-        if (p.x < minX) minX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.x > maxX) maxX = p.x;
-        if (p.y > maxY) maxY = p.y;
-      }
-      if (
-        maxX < rect.x - holgura ||
-        minX > rect.x + rect.ancho + holgura ||
-        maxY < rect.y - holgura ||
-        minY > rect.y + rect.alto + holgura
-      ) {
-        continue;
-      }
-
-      locales.push(
-        silueta.map((p) => {
-          const rel = { x: p.x - rect.x, y: p.y - rect.y };
-          return inversa ? aplicar(inversa, rel) : rel;
-        })
-      );
-    }
-
-    if (locales.length === 0) {
-      sinRecorte();
-      return;
-    }
-
-    const huecos: string[] = [];
-    const numero = (v: number) => Math.round(v * 10) / 10;
-    for (const local of fusionarCascosQueSeCruzan(locales)) {
-      if (local.length < 3) continue;
-      // El agujero tiene que girar AL REVÉS que el rectángulo exterior: con la
-      // regla "nonzero" de CSS solo así queda vacío por dentro.
-      let area = 0;
-      for (let i = 0; i < local.length; i++) {
-        const a = local[i];
-        const b = local[(i + 1) % local.length];
-        area += a.x * b.y - b.x * a.y;
-      }
-      if (area > 0) local.reverse();
-
-      huecos.push("M" + local.map((p) => `${numero(p.x)} ${numero(p.y)}`).join("L") + "Z");
-    }
-
-    if (huecos.length === 0) {
-      sinRecorte();
-      return;
-    }
-
-    const ancho = Math.round(rect.ancho);
-    const alto = Math.round(rect.alto);
-    const exterior = `M0 0L${ancho} 0L${ancho} ${alto}L0 ${alto}Z`;
-    elemento.style.clipPath = `path("${exterior}${huecos.join("")}")`;
-  }
-
-  /**
-   * Dos cuerpos pegados dan dos cascos que se solapan. Con la regla
-   * "nonzero" de CSS, dos agujeros superpuestos SUMAN sus vueltas: la zona
-   * común queda con vuenturno distinto de cero y sale PINTADA (un trozo de
-   * papel encima de los dos cuerpos). Aquí los cascos que se cruzan se
-   * mezclan en uno solo (el convexo de sus vértices), así todos los agujeros
-   * quedan disjuntos y la regla nonzero los recorta bien.
-   */
-  function fusionarCascosQueSeCruzan(cascos: Punto[][]): Punto[][] {
-    if (cascos.length < 2) return cascos.slice();
-    const pendientes = cascos.slice();
-    const listos: Punto[][] = [];
-    while (pendientes.length > 0) {
-      let actual = pendientes.pop()!;
-      for (let i = pendientes.length - 1; i >= 0; i--) {
-        if (cascosSeSolapan(actual, pendientes[i])) {
-          actual = cascoConvexo(actual.concat(pendientes[i]));
-          pendientes.splice(i, 1);
-          // El casco nuevo puede cruzarse con otros: se vuelve a barrer entero.
-          i = pendientes.length;
-        }
-      }
-      listos.push(actual);
-    }
-    return listos;
-  }
-
-  /** ¿Se solapan (o se rozan) dos polígonos convexos? Cajas primero, luego SAT. */
-  function cascosSeSolapan(a: Punto[], b: Punto[]): boolean {
-    if (a.length < 3 || b.length < 3) return false;
-
-    let aMinX = Infinity;
-    let aMaxX = -Infinity;
-    let aMinY = Infinity;
-    let aMaxY = -Infinity;
-    for (const p of a) {
-      if (p.x < aMinX) aMinX = p.x;
-      if (p.x > aMaxX) aMaxX = p.x;
-      if (p.y < aMinY) aMinY = p.y;
-      if (p.y > aMaxY) aMaxY = p.y;
-    }
-    let bMinX = Infinity;
-    let bMaxX = -Infinity;
-    let bMinY = Infinity;
-    let bMaxY = -Infinity;
-    for (const p of b) {
-      if (p.x < bMinX) bMinX = p.x;
-      if (p.x > bMaxX) bMaxX = p.x;
-      if (p.y < bMinY) bMinY = p.y;
-      if (p.y > bMaxY) bMaxY = p.y;
-    }
-    if (aMaxX < bMinX || bMaxX < aMinX || aMaxY < bMinY || bMaxY < aMinY) return false;
-
-    return !hayEjeSeparador(a, b) && !hayEjeSeparador(b, a);
-  }
-
-  /** Eje de separación (SAT): true si algún borde de `fuente` parte a los dos. */
-  function hayEjeSeparador(fuente: Punto[], otro: Punto[]): boolean {
-    for (let i = 0; i < fuente.length; i++) {
-      const p = fuente[i];
-      const q = fuente[(i + 1) % fuente.length];
-      const nx = q.y - p.y;
-      const ny = p.x - q.x;
-      if (nx === 0 && ny === 0) continue;
-
-      let minF = Infinity;
-      let maxF = -Infinity;
-      for (const v of fuente) {
-        const d = v.x * nx + v.y * ny;
-        if (d < minF) minF = d;
-        if (d > maxF) maxF = d;
-      }
-      let minO = Infinity;
-      let maxO = -Infinity;
-      for (const v of otro) {
-        const d = v.x * nx + v.y * ny;
-        if (d < minO) minO = d;
-        if (d > maxO) maxO = d;
-      }
-      if (maxF < minO || maxO < minF) return true;
-    }
-    return false;
-  }
 
   function actualizarPosicionYoutube(): void {
     if (!contenedorYoutube) return;
 
-    // Pantalla en grande: se clava a la zona de la caja y se ignora el tablero.
-    // La matriz de perspectiva se QUITA aquí: si no, el vídeo se quedaría
-    // torcido dentro del reproductor a pantalla completa.
+    // La caja de YouTube es un panel PERSONAL FIJO (arriba a la derecha): no se
+    // proyecta en la pizarra 3D, así que aquí no hay homografía ni recorte de
+    // silueta que recalcular. Solo se gestiona la "pantalla en grande".
     if (modoCompleto) {
       contenedorYoutube.style.display = "block";
       contenedorYoutube.style.left = "0px";
       contenedorYoutube.style.top = "0px";
+      contenedorYoutube.style.right = "auto";
       contenedorYoutube.style.width = "100%";
       contenedorYoutube.style.height = "100%";
+      contenedorYoutube.style.borderRadius = "0px";
       contenedorYoutube.style.transform = "none";
-      recortarConSilueta(contenedorYoutube, cajaPantallaCompleta(contenedorYoutube));
       return;
     }
 
-    // Se posiciona el CONTENEDOR y no el <iframe>, porque la API de YouTube sustituye
-    // el elemento que recibe por el suyo propio: mover el nodo viejo no movería nada.
-    const rect = proyectarPantalla();
-    if (!rect || !rect.visible) {
-      contenedorYoutube.style.display = "none";
-      recortarConSilueta(contenedorYoutube, null);
-      return;
-    }
-
+    // Modo caja: volver a la posición fija de la esquina superior derecha.
     contenedorYoutube.style.display = "block";
-    contenedorYoutube.style.left = `${rect.x}px`;
-    contenedorYoutube.style.top = `${rect.y}px`;
-    contenedorYoutube.style.width = `${rect.ancho}px`;
-    contenedorYoutube.style.height = `${rect.alto}px`;
-    // Matrix3d: el rectángulo del contenedor se deforma hasta calzar con las
-    // cuatro esquinas de la pizarra, así el vídeo se queda quieto en la pared
-    // aunque la persona se mueva o mire de lado.
-    if (rect.homografia) {
-      contenedorYoutube.style.transformOrigin = "0 0";
-      contenedorYoutube.style.transform = matriz3d(rect.homografia);
-    } else {
-      contenedorYoutube.style.transform = "none";
-    }
-    // Y el hueco con la persona: si no, al mirar de frente el vídeo taparía la
-    // cabeza del personaje (el HTML siempre se pinta encima del canvas).
-    recortarConSilueta(contenedorYoutube, rect);
+    contenedorYoutube.style.left = "auto";
+    contenedorYoutube.style.top = "16px";
+    contenedorYoutube.style.right = "16px";
+    contenedorYoutube.style.width = "min(30vw, 380px)";
+    contenedorYoutube.style.height = "min(16.875vw, 214px)";
+    contenedorYoutube.style.borderRadius = "12px";
+    contenedorYoutube.style.transform = "none";
   }
 
   function extraerIdYoutube(url: string): string | null {
@@ -1899,36 +1442,21 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     }
 
     // VISTA DE LA SALA (cualquier otro, y el del atril cuando ya NO escribe):
-    // el papel se pega en la pizarra 3D con la MISMA homografía del vídeo, así
-    // el texto se ve ESCRITO EN EL TABLERO —como en una pizarra de
-    // verdad— y no flotando en una esquina de la pantalla. Es la proyección
-    // la que hace el trabajo: a cualquier distancia y ángulo el papel calza
-    // con la pizarra, y lo que se teclea en el atril aparece aquí EN VIVO.
+    // el papel es un PANEL FIJO A LA DERECHA de solo lectura, igual que el del
+    // que escribe pero sin borde editable. Así el estudiante ve a la derecha lo
+    // que el profe teclea EN VIVO, sin proyectarlo en la pizarra 3D (la
+    // proyección con homografía + recorte de silueta era la que dibujaba los
+    // "domos" verdes, traba la página al acercarse y podía crashearla).
     barraEnPosicionNormal();
-    const rect = proyectarPantalla();
-    if (!rect || !rect.visible) {
-      caja.style.display = "none";
-      recortarConSilueta(caja, null);
-      return;
-    }
-
+    const vista = rectEdicion();
     caja.style.display = "block";
-    caja.style.left = `${rect.x}px`;
-    caja.style.top = `${rect.y}px`;
-    caja.style.width = `${rect.ancho}px`;
-    caja.style.height = `${rect.alto}px`;
-
-    if (rect.homografia) {
-      caja.style.transformOrigin = "0 0";
-      caja.style.transform = matriz3d(rect.homografia);
-    } else {
-      caja.style.transform = "none";
-    }
-    ajustarFuenteNotas(rect.alto);
-
-    // Hueco con la persona: lo escrito queda DETRÁS de ella igual que el
-    // vídeo (el papel también es HTML y se pinta sobre el canvas).
-    recortarConSilueta(caja, rect);
+    caja.style.left = `${vista.left}px`;
+    caja.style.top = `${vista.top}px`;
+    caja.style.width = `${vista.ancho}px`;
+    caja.style.height = `${vista.alto}px`;
+    caja.style.transform = "none";
+    ajustarFuenteNotas(vista.alto);
+    if (caja.style.clipPath) caja.style.clipPath = "";
   }
 
   function asegurarBarraNotas(): HTMLDivElement {
@@ -2196,32 +1724,18 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     if (zona) pintar(zona);
   }
 
-  function actualizar(proveedorSiluetas?: () => readonly (readonly PuntoMundo[])[] | null): void {
+  function actualizar(): void {
     // La textura de vídeo no avanza sola: Babylon solo la actualiza cuando llegan
     // eventos (canplay/seeked/paused). Sin este refresco a mano el tablero se
     // quedaría congelado en el primer fotograma.
     texturaVideo?.update();
 
-    // Las siluetas solo hacen falta cuando hay contenido HTML PEGADO a la
-    // pizarra: el iframe de YouTube y el papel de notas proyectado (mientras
-    // se escribe, el papel es el panel de la derecha y no recorta nada). Lo
-    // que va como TEXTURA ya lo tapa el motor 3D por sí solo (ahí la persona
-    // queda por delante sin que haga falta recortar). Y como el proveedor es
-    // perezoso, con la pizarra vacía no se recorren los huesos de nadie.
-    const hayContenidoHtml =
-      Boolean(contenedorYoutube && contenedorYoutube.style.display !== "none") ||
-      (hayNotas && !modoNotas);
-    siluetaPantalla = [];
-    if (hayContenidoHtml && proveedorSiluetas) {
-      const lista = proveedorSiluetas();
-      if (lista) {
-        for (const silueta of lista) {
-          const contorno = proyectarSilueta(silueta);
-          if (contorno) siluetaPantalla.push(contorno);
-        }
-      }
-    }
-
+    // NI EL IFRAME DE YOUTUBE NI EL PAPEL DE NOTAS SE PEGAN YA EN LA PIZARRA 3D:
+    // el vídeo vive en una caja personal fija (arriba a la derecha) y las notas
+    // en un panel lateral. Por eso ya NO se calcula la silueta de nadie para
+    // recortar contenido HTML (era lo que dibujaba los "domos" verdes y traba la
+    // página al acercarse alguien). Lo que va como TEXTURA en el tablero (PDF,
+    // imágenes, vídeo subido, pantalla compartida) lo tapa el motor 3D solo.
     actualizarPosicionYoutube();
     actualizarPosicionNotas();
     refrescarPantallaCompleta();
@@ -2374,7 +1888,6 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     panelPresentador = null;
     panelActivo = false;
     clavePanel = "";
-    siluetaPantalla = [];
     hayNotas = false;
     modoNotas = false;
     youtubeActual = null;

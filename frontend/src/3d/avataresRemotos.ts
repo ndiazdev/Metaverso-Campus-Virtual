@@ -104,13 +104,15 @@ export interface AvataresRemotos {
    * aún no existe o no ha publicado posición.
    */
   posicionCabeza: (id: string) => BABYLON.Vector3 | null;
+  // (Eliminado) `siluetas`: el tablero ya no recorta el vídeo con la forma del
+  // cuerpo (YouTube dejó de proyectarse en la pizarra 3D), así que nadie la
+  // usa.
   /**
-   * Siluetas (huesos en coordenadas de MUNDO) de todos los avatares remotos
-   * visibles. El tablero las usa, junto a la del avatar local, para recortar
-   * el vídeo: así no se tapa a nadie que esté delante de
-   * la pizarra (p. ej. el profe presentando en el atril).
+   * Cuerpos (posición en el plano XZ + radio) de los avatares remotos que ya
+   * han publicado sitio. Sirve para que nadie camine A TRAVÉS de nadie: el que
+   * camina choca contra estos discos igual que contra una mesa.
    */
-  siluetas: () => Array<Array<{ x: number; y: number; z: number }>>;
+  cuerpos: () => Array<{ x: number; z: number; radio: number }>;
   /** Ancho de la etiqueta del nombre en unidades del salón (para apartar el cuadrito de vídeo). */
   anchoEtiqueta: () => number;
   /** Nombre visible de un participante (para la etiqueta del cuadrito de vídeo). */
@@ -1022,29 +1024,31 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     );
   }
 
-  function siluetas(): Array<Array<{ x: number; y: number; z: number }>> {
-    const resultado: Array<Array<{ x: number; y: number; z: number }>> = [];
-    for (const avatar of avatares.values()) {
-      if (!avatar.posicionRecibida) continue;
-      const puntos: Array<{ x: number; y: number; z: number }> = [];
-      for (const malla of avatar.raiz.getChildMeshes(false)) {
-        const esqueleto = malla.skeleton;
-        if (!esqueleto) continue;
-        for (const hueso of esqueleto.bones) {
-          const p = hueso.getAbsolutePosition(malla);
-          if (Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
-            puntos.push({ x: p.x, y: p.y, z: p.z });
-          }
-        }
-        break; // el primer esqueleto del cuerpo basta
-      }
-      if (puntos.length >= 6) resultado.push(puntos);
-    }
-    return resultado;
-  }
+  // (Eliminada) `siluetas`: el tablero ya no recorta el vídeo con la forma del
+  // cuerpo (YouTube dejó de proyectarse en la pizarra 3D), así que nadie la usa.
 
   function nombreDe(id: string): string {
     return avatares.get(id)?.nombre ?? "";
+  }
+
+  // Radio (XZ) del cuerpo de un avatar remoto, en unidades del salón. Va con el
+  // mismo valor que RADIO_PERSONAJE del que camina, así que al chocar se separan
+  // a radio combinado (0.55 + 0.55 ≈ 1.1 u) y no se pueden cruzar.
+  const RADIO_CUERPO_REMOTO = 0.55;
+
+  function cuerpos(): Array<{ x: number; z: number; radio: number }> {
+    const resultado: Array<{ x: number; z: number; radio: number }> = [];
+    for (const avatar of avatares.values()) {
+      // Sin posición de la red todavía no hay nada con lo que chocar (la raíz
+      // se queda en el origen hasta el primer estado).
+      if (!avatar.posicionRecibida) continue;
+      resultado.push({
+        x: avatar.raiz.position.x,
+        z: avatar.raiz.position.z,
+        radio: RADIO_CUERPO_REMOTO,
+      });
+    }
+    return resultado;
   }
 
   return {
@@ -1052,7 +1056,7 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     miId: () => presencia?.miId() ?? null,
     publicarTablero: (mensaje) => presencia?.publicarTablero(mensaje),
     posicionCabeza,
-    siluetas,
+    cuerpos,
     anchoEtiqueta: () => anchoEtiqueta(),
     nombreDe,
     emitirSignaling: (evento, datos) => presencia?.emitirSignaling(evento, datos),

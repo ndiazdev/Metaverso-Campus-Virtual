@@ -293,6 +293,125 @@ function empujarFueraDeObstaculos(posicion: BABYLON.Vector3): void {
   }
 }
 
+// ---------------------------------------------------------------
+// PUNTOS DE APARICION POR ROL Y PERSONA
+//
+// Antes todo el mundo aparecia en el mismo punto hardcodeado (0, SUELO_Y, -8),
+// asi que quienes entraban a la vez salian apilados uno encima del otro. Ahora
+// cada persona tiene su propio sitio de entrada:
+//
+//   · docente/admin  -> DETRAS DEL ATRIL, mirando a la clase (igual que la R).
+//   · estudiante/invitado -> DE PIE JUNTO A UN PUPITRE, repartidos por el aula.
+//
+// El reparto es DETERMINISTA por CORREO (la identidad estable del proyecto):
+// la misma persona siempre aparece en el mismo pupitre ("mesa asignada") y los
+// distintos se distribuyen por las sillas via hash(correo) % nº de sitios.
+//
+// Es 100% client-side: cada cliente elige su spawn y lo publica por red
+// (estadoLocal ya manda personaje.raiz.position), asi que no hay que tocar el
+// backend.
+// ---------------------------------------------------------------
+
+// Hash FNV-1a sobre un string (correos) -> entero sin signo estable.
+function hashTexto(texto: string): number {
+  let h = 0x811c9dc5;
+  for (let i = 0; i < texto.length; i++) {
+    h ^= texto.charCodeAt(i);
+    h = Math.imul(h, 0x01000193);
+  }
+  return h >>> 0;
+}
+
+function elegirPuntoAparicion(): { posicion: BABYLON.Vector3; yaw: number } {
+  const sesion = obtenerSesion();
+  const rol = sesion?.rol ?? "estudiante";
+  const respaldo = { posicion: new BABYLON.Vector3(0, SUELO_Y, -8), yaw: 0 };
+
+  // --- DOCENTE / ADMIN: detras del atril, mirando a la clase ---------------
+  // Misma geometria que el teletransporte R (funcionalidades.alternarAtril):
+  // "al frente" es hacia donde estan los alumnos (centro de los obstaculos).
+  if ((rol === "docente" || rol === "admin") && atril) {
+    let centroX = 0;
+    let centroZ = 0;
+    for (const obs of obstaculosSolidos) {
+      centroX += (obs.min.x + obs.max.x) / 2;
+      centroZ += (obs.min.z + obs.max.z) / 2;
+    }
+    centroX /= Math.max(1, obstaculosSolidos.length);
+    centroZ /= Math.max(1, obstaculosSolidos.length);
+
+    const alFrente = new BABYLON.Vector3(
+      centroX - atril.posicionAtril.x,
+      0,
+      centroZ - atril.posicionAtril.z
+    );
+    if (alFrente.lengthSquared() < 1e-6) {
+      alFrente.x = 1;
+      alFrente.z = 0;
+    }
+    alFrente.normalize();
+
+    // Media profundidad de la caja del atril proyectada sobre la direccion de
+    // la clase, para no salir dentro de la madera.
+    let mediaFondo = 0.6;
+    let distanciaMejor = Infinity;
+    for (const obs of obstaculosSolidos) {
+      const dx = (obs.min.x + obs.max.x) / 2 - atril.posicionAtril.x;
+      const dz = (obs.min.z + obs.max.z) / 2 - atril.posicionAtril.z;
+      const distancia = Math.hypot(dx, dz);
+      if (distancia < distanciaMejor) {
+        distanciaMejor = distancia;
+        mediaFondo =
+          (Math.abs(alFrente.x) * (obs.max.x - obs.min.x) +
+            Math.abs(alFrente.z) * (obs.max.z - obs.min.z)) /
+          2;
+      }
+    }
+
+    const posicion = new BABYLON.Vector3(
+      atril.posicionAtril.x - alFrente.x * (mediaFondo + RADIO_PERSONAJE + 0.35),
+      SUELO_Y,
+      atril.posicionAtril.z - alFrente.z * (mediaFondo + RADIO_PERSONAJE + 0.35)
+    );
+    if (haySolape(posicion)) empujarFueraDeObstaculos(posicion);
+    recortarAlSalon(posicion, RADIO_PERSONAJE);
+    // Convencion: yaw = atan2(dir.x, dir.z) (yaw=0 mira a +Z).
+    return { posicion, yaw: Math.atan2(alFrente.x, alFrente.z) };
+  }
+
+  // --- ESTUDIANTE / INVITADO: de pie junto a un pupitre --------------------
+  // Un candidato por cada silla: la XZ del punto de sentarse, a altura de
+  // suelo (no sentado). empujarFueraDeObstaculos lo saca de la caja de la
+  // silla/mesa hacia el hueco libre mas cercano = el pasillo detras del
+  // pupitre, que es justo "de pie junto al pupitre".
+  const candidatos: BABYLON.Vector3[] = [];
+  for (const par of paresSillas) {
+    const punto = new BABYLON.Vector3(
+      par.puntoSit.posicion.x,
+      SUELO_Y,
+      par.puntoSit.posicion.z
+    );
+    empujarFueraDeObstaculos(punto);
+    recortarAlSalon(punto, RADIO_PERSONAJE);
+    if (posicionValida(punto)) candidatos.push(punto);
+  }
+  if (!candidatos.length) return respaldo;
+
+  const correo = sesion?.correo ?? "";
+  const indice = hashTexto(correo) % candidatos.length;
+  const posicion = candidatos[indice].clone();
+
+  // Mirar al frente (al atril/tablero). Sin atril, yaw 0 (mirando a +Z).
+  let yaw = 0;
+  if (atril) {
+    yaw = Math.atan2(
+      atril.posicionAtril.x - posicion.x,
+      atril.posicionAtril.z - posicion.z
+    );
+  }
+  return { posicion, yaw };
+}
+
 let pantallaTablero: BABYLON.Mesh | null = null;
 let materialPantalla: BABYLON.StandardMaterial | null = null;
 
@@ -542,14 +661,23 @@ function subirProporcionalmenteUnaMalla(malla: BABYLON.AbstractMesh, delta: numb
   return true;
 }
 
-// Muebles (escritorios, sillas, atril): colisión propia vía ObstaculoSolido y
+// Muebles (escritorios, sillas, atril, cabinet): colisión propia vía ObstaculoSolido y
 // NUNCA checkCollisions (ver ObstaculoSolido: el motor se atasca en las lajas finas).
+// El CABINET (taquera/armario, p. ej. cabinet.003) entra aquí también: con
+// checkCollisions el elipsoide se atascaba detrás de la laja fina y no dejaba
+// salir ("intento salir y no me deja"). Con AABB + rechazo-por-eje el cuerpo se
+// detiene en la cara y SIEMPRE puede retroceder, nunca queda atrapado dentro.
 function esMuebleNombre(nombre: string): boolean {
-  return nombre.includes("desk") || nombre.includes("chair") || nombre.includes("lecturn");
+  return (
+    nombre.includes("desk") ||
+    nombre.includes("chair") ||
+    nombre.includes("lecturn") ||
+    nombre.includes("cabinet")
+  );
 }
 
 // Toda malla con geometría que NO sea mueble es estructura del salón (muros,
-// techo, parqués, cabinet, estantes…). La exportación actual del Blender no
+// techo, parqués, estantes…). La exportación actual del Blender no
 // trae ninguna malla llamada "room"/"wall", así que un filtro por nombre no
 // acertaba con NINGUNA malla y todo quedaba sin colisión: el personaje
 // atravesaba las paredes. La raíz "__root__" del loader no tiene vértices
@@ -824,13 +952,14 @@ function medirInteriorDelSalon(
       return;
     }
 
-    // Estructura del salón (muros, techo, parqués, cabinet…): al motor de
+    // Estructura del salón (muros, techo, parqués…): al motor de
     // colisiones. Antes se filtraba por nombres ("room"/"wall"/…) y la
     // exportación actual del Blender no trae NINGUNA malla con esos nombres
-    // (los muros son Cube.011, Cube.012, cabinet.003, Cube.003…), así que
+    // (los muros son Cube.011, Cube.012, Cube.003…), así que
     // todas quedaban con checkCollisions=false y el personaje se salía
     // andando por la pared. Ahora toda malla con geometría que no sea mueble
-    // es estructura (esMallaEstructura); los muebles ya salieron arriba.
+    // es estructura (esMallaEstructura); los muebles (incluido el cabinet)
+    // ya salieron arriba.
     mesh.checkCollisions = esMallaEstructura(mesh);
   });
 
@@ -1286,7 +1415,31 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   let personaje: Personaje | null = null;
   try {
     personaje = await cargarPersonaje(scene, obtenerSesion()?.rol ?? "estudiante");
-    personaje.raiz.position = new BABYLON.Vector3(0, SUELO_Y, -8);
+
+    // PUNTO DE APARICION POR ROL Y PERSONA (ver elegirPuntoAparicion): el
+    // docente detras del atril mirando a la clase, los estudiantes de pie
+    // junto a un pupitre repartidos por el aula (mesa asignada por correo).
+    // Antes todo el mundo salia apilado en el mismo (0, SUELO_Y, -8).
+    const aparicion = elegirPuntoAparicion();
+    personaje.raiz.position.copyFrom(aparicion.posicion);
+
+    // Orientar cuerpo y camara al yaw del punto de aparicion. La raiz glTF
+    // trae rotationQuaternion, en cuyo caso Babylon ignora raiz.rotation:
+    // hay que componer con la rotacion base del loader (mismo criterio que el
+    // bucle de render y el teletransporte del atril).
+    camara.rotation.y = aparicion.yaw;
+    if (personaje.raiz.rotationQuaternion) {
+      const base = personaje.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity();
+      personaje.raiz.rotationQuaternion =
+        BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, aparicion.yaw).multiply(base);
+    } else {
+      personaje.raiz.rotation.y = aparicion.yaw;
+    }
+
+    // Camara al mismo sitio, a altura de ojo (evita un frame en el punto viejo;
+    // despues la mantiene pegada pegarCamaraAlCuerpo).
+    camara.position.copyFrom(aparicion.posicion);
+    camara.position.y += alturaOjoActiva;
 
     // CUERPO DE COLISIÃ“N DEL PERSONAJE (lo que lleva moveWithCollisions).
     // No usa la geometrÃ­a del modelo, usa este elipsoide:
@@ -1393,24 +1546,22 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     posicionValida,
     haySolape,
     empujarFueraDeObstaculos,
+    // Cuerpos de las demas personas (XZ + radio): nadie camina a traves de nadie.
+    // Se lee en cada llamada, asi que funciona aunque `remotos` se cree despues.
+    cuerposAjenos: () => remotos?.cuerpos() ?? [],
     aviso,
     avisoMano,
     limpiadores: limpiadoresDePartida,
     radioPersonaje: RADIO_PERSONAJE,
     alturaOjoProfesor: alturaOjoActiva,
     alCambiarEstado: () => reflejarBarra(),
-    alActualizarTablero: (darSilueta) => {
-      // LA SILUETA YA NO ES SOLO LA MIA: recortar solo con el casco de un
-      // unico avatar dejaba el cuerpo del profe en el atril TAPADO por el
-      // video compartido. El proveedor junta la mia con las de los avatares
-      // remotos visibles; cada persona abre su propio agujero en el clipPath.
-      // Es perezoso: el tablero solo lo llama si hay algo HTML que recortar.
-      tablero?.actualizar(() => {
-        const ajenas = remotos ? remotos.siluetas() : [];
-        const mia = darSilueta();
-        return mia ? [mia, ...ajenas] : ajenas;
-      });
-      // VISTA DEL PRESENTADOR: mientras se estÃ¡ en el atril, la pantallita
+    alActualizarTablero: () => {
+      // YouTube y notas ya NO se pegan en la pizarra 3D (el vídeo es una caja
+      // personal fija arriba a la derecha, las notas un panel lateral), asi que
+      // aqui ya no se juntan siluetas para recortar nada: solo se refresca la
+      // posicion de la caja y la textura de video.
+      tablero?.actualizar();
+      // VISTA DEL PRESENTADOR: mientras se esta en el atril, la pantallita
       // inferior izquierda repite la pizarra (que queda a las espaldas) para
       // no tener que dejar de mirar a la clase.
       tablero?.vistaPresentador(func.enElAtril());

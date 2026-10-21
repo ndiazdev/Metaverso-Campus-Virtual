@@ -24,7 +24,6 @@
 import * as BABYLON from "babylonjs";
 import { ALTURA_OBJETIVO_BASE, ALTURA_OBJETIVO_U, type Personaje } from "./personaje";
 import { t } from "../state/idioma";
-import type { PuntoMundo } from "./tableroFuncionalidad";
 
 // VELOCIDAD DE CAMINADO, en unidades por SEGUNDO, MEDIDA SOBRE LA ESTATURA BASE
 // (5.892 u = 1.85 m): 4.0 u/s ≈ 1.26 m/s, paso normal. Antes era `0.15` por
@@ -111,6 +110,13 @@ export interface ContextoFuncionalidades {
   posicionValida: (posicion: BABYLON.Vector3) => boolean;
   haySolape: (posicion: BABYLON.Vector3) => boolean;
   empujarFueraDeObstaculos: (posicion: BABYLON.Vector3) => void;
+  /**
+   * Cuerpos (XZ + radio) de las demás personas en la sala, para que nadie
+   * camine A TRAVÉS de nadie. El que camina choca contra estos discos con el
+   * mismo rechazo-por-eje que contra una mesa: se detiene y desliza, y siempre
+   * puede retroceder (no hay empujón que pueda meter a dos juntos).
+   */
+  cuerposAjenos: () => Array<{ x: number; z: number; radio: number }>;
 
   /** Píldora de proximidad ("Presiona E para sentarte"). */
   aviso: HTMLElement;
@@ -126,12 +132,8 @@ export interface ContextoFuncionalidades {
 
   /** Avisar al mapa de que el estado cambió (para reflejarlo en la barra). */
   alCambiarEstado: () => void;
-  /**
-   * Refrescar el tablero. El proveedor de siluetas se llama SOLO si hay
-   * contenido HTML que recortar (YouTube), para no recorrer los
-   * huesos de todos los cuerpos en cada frame.
-   */
-  alActualizarTablero: (darSilueta: () => PuntoMundo[] | null) => void;
+  /** Refrescar el tablero en cada frame (YouTube y notas ya no se proyectan). */
+  alActualizarTablero: () => void;
   /** Al salir del atril: el mapa cierra aquí su menú del tablero. */
   alSalirDelAtril?: () => void;
 }
@@ -241,34 +243,10 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     window.removeEventListener("keyup", alSoltarTecla);
   });
 
-  // -----------------------------------------------------------------------
-  // SILUETA DEL PERSONAJE (para el tablero)
-  //
-  // El <iframe> de YouTube es HTML y se pinta
-  // SIEMPRE encima del canvas 3D: al mirar de frente la cabeza del personaje
-  // quedaba tapada por el vídeo. Aquí se le entregan al tablero los huesos del
-  // esqueleto (posición de MUNDO, ya con la escala y la rotación del modelo)
-  // y él se encarga de proyectarlos y abrir el hueco con su forma.
-  //
-  // Solo en 3ª persona: en 1ª la cámara está puesta en la cabeza del modelo,
-  // los huesos le quedan detrás o rozándole y no hay nada que recortar.
-  // -----------------------------------------------------------------------
-  function siluetaDeLaPersona(): PuntoMundo[] | null {
-    const personaje = ctx.personaje();
-    if (!modoTerceraPersona || !personaje || !personaje.esqueleto || !personaje.malla) return null;
-
-    const puntos: PuntoMundo[] = [];
-    for (const hueso of personaje.esqueleto.bones) {
-      // getAbsolutePosition(malla) aplica la matriz de la malla: sin ella los
-      // huesos saldrían en el espacio del esqueleto (cerca del origen) y el
-      // hueco aparecería en el sitio equivocado.
-      const p = hueso.getAbsolutePosition(personaje.malla);
-      if (Number.isFinite(p.x) && Number.isFinite(p.y) && Number.isFinite(p.z)) {
-        puntos.push({ x: p.x, y: p.y, z: p.z });
-      }
-    }
-    return puntos.length >= 6 ? puntos : null;
-  }
+  // (Eliminada) SILUETA DEL PERSONAJE: el tablero ya no recorta el iframe de
+  // YouTube ni el papel de notas con la forma del cuerpo (YouTube es una caja
+  // personal fija arriba a la derecha y las notas son un panel lateral), así
+  // que ya no hace falta entregar los huesos del esqueleto.
 
   /**
    * Coloca la cámara donde le toca según el cuerpo 3D y el modo 1ª/3ª persona.
@@ -651,23 +629,45 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
         personaje.raiz.position.y = alturaAntes;
         ctx.recortarAlSalon(personaje.raiz.position, ctx.radioPersonaje);
 
+        // ¿Se choca con alguien de la clase? Cada persona remota es un DISCO en
+        // el plano XZ (su cuerpo, no su esqueleto): no se puede caminar a través
+        // de nadie. Se usa el MISMO rechazo-por-eje de los muebles, así que el
+        // que llega se detiene y desliza por el lado, y siempre puede retroceder.
+        const chocaConAlguien = (x: number, z: number): boolean => {
+          for (const cuerpo of ctx.cuerposAjenos()) {
+            const dx = x - cuerpo.x;
+            const dz = z - cuerpo.z;
+            const radio = ctx.radioPersonaje + cuerpo.radio;
+            if (dx * dx + dz * dz < radio * radio) return true;
+          }
+          return false;
+        };
+        // Validez combinada: dentro del salón, sin muebles y sin atravesar a nadie.
+        const valeEn = (x: number, z: number): boolean => {
+          const guardadoX = personaje.raiz.position.x;
+          const guardadoZ = personaje.raiz.position.z;
+          personaje.raiz.position.x = x;
+          personaje.raiz.position.z = z;
+          const ok = ctx.posicionValida(personaje.raiz.position) && !chocaConAlguien(x, z);
+          personaje.raiz.position.x = guardadoX;
+          personaje.raiz.position.z = guardadoZ;
+          return ok;
+        };
+
         // RECHAZO POR EJE, NO EMPUJÓN.
-        // Si la posición resultante no es válida (se salió del salón o cayó dentro de
-        // un mueble), se deshace el eje que la causó. Por qué no "empujar hacia fuera":
-        // con dos cajas pegadas, expulsar a alguien de una lo deja dentro de la otra y
-        // se queda bloqueado sin poder caminar (era el fallo de las sillas).
-        // Al rechazar, el cuerpo nunca ocupa una posición que solape: se detiene en la
-        // boca del mueble, desliza por sus caras y siempre puede retroceder.
-        if (!ctx.posicionValida(personaje.raiz.position)) {
+        // Si la posición resultante no es válida (se salió del salón, cayó dentro de
+        // un mueble o atravesaría a alguien), se deshace el eje que la causó. Por qué
+        // no "empujar hacia fuera": con dos cuerpos pegados, expulsar a alguien de uno
+        // lo deja dentro del otro y se queda bloqueado sin poder caminar (era el fallo
+        // de las sillas). Al rechazar, el cuerpo nunca ocupa una posición que solape:
+        // se detiene en la boca del mueble o de la persona, desliza y siempre puede
+        // retroceder.
+        if (!valeEn(personaje.raiz.position.x, personaje.raiz.position.z)) {
           const movidoX = personaje.raiz.position.x;
           const movidoZ = personaje.raiz.position.z;
 
-          personaje.raiz.position.x = antesX;
-          const valeSinX = ctx.posicionValida(personaje.raiz.position);
-
-          personaje.raiz.position.x = movidoX;
-          personaje.raiz.position.z = antesZ;
-          const valeSinZ = ctx.posicionValida(personaje.raiz.position);
+          const valeSinX = valeEn(antesX, movidoZ);
+          const valeSinZ = valeEn(movidoX, antesZ);
 
           if (valeSinX) {
             // Solo el eje X metía el cuerpo: se conserva el avance en Z (deslizamiento).
@@ -698,11 +698,11 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     // lee aquí abajo. En el atril no hay clip propio: se queda en "parado".
     aplicarAnimacion();
 
-    // Se calcula siempre, aunque estés sentado o en el atril: el iframe de YouTube
+    // Se calcula siempre, aunque estés sentado o en el atril: la caja de YouTube
     // se posiciona respecto a la cámara (que sí se mueve al teletransportarte al
-    // atril) y la textura de vídeo necesita su refresco de fotograma. La silueta
-    // va aparte: es lo que impide que el vídeo tape al personaje.
-    ctx.alActualizarTablero(() => siluetaDeLaPersona());
+    // atril) y la textura de vídeo necesita su refresco de fotograma. Ya no se
+    // pasa silueta: nada se pega en la pizarra 3D que recortar.
+    ctx.alActualizarTablero();
 
     // EN EL ATRIL O SENTADO: el cuerpo no camina (WASD está anulado), pero la
     // cámara sigue pegada a él. Sin esta línea, B (1ª/3ª persona) y el giro del

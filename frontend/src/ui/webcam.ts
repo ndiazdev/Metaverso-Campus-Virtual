@@ -11,9 +11,9 @@
  *   camara.destruir();         // al salir de la clase: apaga el piloto de la webcam
  *
  * DÓNDE SE VE
- *   · La tuya propia: cajita arriba a la DERECHA (la izquierda la ocupan
- *     el engranaje y la píldora de la clase, así que no quedan montados
- *     uno sobre otro), más grande y espejada como en cualquier videollamada.
+ *   · La tuya propia: cajita arriba a la IZQUIERDA, por debajo del engranaje
+ *     y de la píldora de la clase (que ocupan la esquina superior izquierda),
+ *     más grande y espejada como en cualquier videollamada.
  *   · La de los demás: cuadrito al LADO del modelo 3D de cada persona
  *     (src/red/videoSalon.ts), proyectado en pantalla en cada frame.
  */
@@ -32,11 +32,12 @@ export interface CamaraWeb {
 }
 
 // El CSS se inyecta una sola vez, aunque se entre y se salga de la partida.
-// La self-view es un CUADRITO grande arriba a la DERECHA (la izquierda la
-// ocupan el engranaje y la píldora de la clase): el vídeo llena la caja, la
-// ✕ aparece al pasar el ratón y la etiqueta queda como insignia superpuesta.
+// La self-view es un CUADRITO grande arriba a la IZQUIERDA, por debajo del
+// engranaje y de la píldora de la clase (que ocupan la esquina superior
+// izquierda): el vídeo llena la caja, la ✕ aparece al pasar el ratón y la
+// etiqueta queda como insignia superpuesta.
 const ESTILO = `
-.cw-caja{position:fixed;top:16px;right:16px;width:200px;height:200px;border-radius:12px;overflow:hidden;background:#0B1220;border:1px solid rgba(255,255,255,0.18);box-shadow:0 8px 24px rgba(0,0,0,0.45);z-index:1500;font-family:sans-serif;display:none}
+.cw-caja{position:fixed;top:80px;left:16px;width:200px;height:200px;border-radius:12px;overflow:hidden;background:#0B1220;border:1px solid rgba(255,255,255,0.18);box-shadow:0 8px 24px rgba(0,0,0,0.45);z-index:1500;font-family:sans-serif;display:none}
 .cw-caja.cw-visible{display:block}
 .cw-video{display:block;width:100%;height:100%;object-fit:cover;background:#000;transform:scaleX(-1)}
 .cw-etiqueta{position:absolute;left:5px;bottom:5px;font-size:10px;line-height:1.2;color:#E2E8F0;background:rgba(0,0,0,0.5);border-radius:4px;padding:2px 6px;pointer-events:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:calc(100% - 10px)}
