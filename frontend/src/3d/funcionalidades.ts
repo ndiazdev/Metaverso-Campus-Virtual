@@ -126,8 +126,12 @@ export interface ContextoFuncionalidades {
 
   /** Avisar al mapa de que el estado cambió (para reflejarlo en la barra). */
   alCambiarEstado: () => void;
-  /** Refrescar el tablero con la silueta del cuerpo (recorte del vídeo). */
-  alActualizarTablero: (silueta: PuntoMundo[] | null) => void;
+  /**
+   * Refrescar el tablero. El proveedor de siluetas se llama SOLO si hay
+   * contenido HTML que recortar (YouTube), para no recorrer los
+   * huesos de todos los cuerpos en cada frame.
+   */
+  alActualizarTablero: (darSilueta: () => PuntoMundo[] | null) => void;
   /** Al salir del atril: el mapa cierra aquí su menú del tablero. */
   alSalirDelAtril?: () => void;
 }
@@ -202,10 +206,32 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   // -----------------------------------------------------------------------
   const teclasPresionadas: { [key: string]: boolean } = {};
 
+  /**
+   * true si el evento de teclado viene de un campo donde se ESCRIBE (el
+   * papel de notas del tablero, un input de menú, un contentEditable).
+   * Mientras se teclea, WASD no debe mover al avatar: la "w" de "hola"
+   * lo ponía a caminar hacia delante.
+   */
+  function tecleandoEnUnCampo(e: KeyboardEvent): boolean {
+    const destino = e.target as HTMLElement | null;
+    if (!destino) return false;
+    const etiqueta = destino.tagName;
+    return (
+      etiqueta === "TEXTAREA" ||
+      etiqueta === "INPUT" ||
+      destino.isContentEditable === true
+    );
+  }
+
   const alPulsarTecla = (e: KeyboardEvent) => {
+    // Con el foco en un campo de texto no se mueve al avatar (el keyup de
+    // esa misma tecla sí se atiende, para no dejar la tecla "pegada").
+    if (tecleandoEnUnCampo(e)) return;
     teclasPresionadas[e.key.toLowerCase()] = true;
   };
   const alSoltarTecla = (e: KeyboardEvent) => {
+    // Siempre se limpia, aunque el foco esté en un campo: si "w" se pulsó
+    // fuera del papel y al soltarla el foco ya cambió, no queda andando.
     teclasPresionadas[e.key.toLowerCase()] = false;
   };
   window.addEventListener("keydown", alPulsarTecla);
@@ -218,7 +244,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   // -----------------------------------------------------------------------
   // SILUETA DEL PERSONAJE (para el tablero)
   //
-  // El <iframe> de YouTube y el papel de notas son HTML y se pintan
+  // El <iframe> de YouTube es HTML y se pinta
   // SIEMPRE encima del canvas 3D: al mirar de frente la cabeza del personaje
   // quedaba tapada por el vídeo. Aquí se le entregan al tablero los huesos del
   // esqueleto (posición de MUNDO, ya con la escala y la rotación del modelo)
@@ -676,7 +702,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     // se posiciona respecto a la cámara (que sí se mueve al teletransportarte al
     // atril) y la textura de vídeo necesita su refresco de fotograma. La silueta
     // va aparte: es lo que impide que el vídeo tape al personaje.
-    ctx.alActualizarTablero(siluetaDeLaPersona());
+    ctx.alActualizarTablero(() => siluetaDeLaPersona());
 
     // EN EL ATRIL O SENTADO: el cuerpo no camina (WASD está anulado), pero la
     // cámara sigue pegada a él. Sin esta línea, B (1ª/3ª persona) y el giro del

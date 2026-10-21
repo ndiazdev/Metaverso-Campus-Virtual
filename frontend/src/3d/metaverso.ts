@@ -21,7 +21,7 @@ import type { EstadoLocal, Participante } from "../red/presencia";
 // los mismos botones sin reescribirlos.
 import { crearMenuAjustes, leerVolumen, guardarVolumen, type MenuAjustes } from "../ui/menuAjustes";
 import { crearBarraUsuario, type BarraUsuario, type AccionBarra } from "../ui/barraUsuario";
-import { alternarMicrofono, estadoMicrofono, liberarMicrofono } from "../ui/microfono";
+import { alternarMicrofono, estadoMicrofono, liberarMicrofono, obtenerFlujoMicrofono } from "../ui/microfono";
 import { crearCamaraWeb, type CamaraWeb } from "../ui/webcam";
 import { crearVideoSalon, type VideoSalon } from "../red/videoSalon";
 // TABLERO: PDF, vÃ­deo, YouTube y compartir pantalla viven en su propio archivo,
@@ -1399,8 +1399,17 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     radioPersonaje: RADIO_PERSONAJE,
     alturaOjoProfesor: alturaOjoActiva,
     alCambiarEstado: () => reflejarBarra(),
-    alActualizarTablero: (silueta) => {
-      tablero?.actualizar(silueta);
+    alActualizarTablero: (darSilueta) => {
+      // LA SILUETA YA NO ES SOLO LA MIA: recortar solo con el casco de un
+      // unico avatar dejaba el cuerpo del profe en el atril TAPADO por el
+      // video compartido. El proveedor junta la mia con las de los avatares
+      // remotos visibles; cada persona abre su propio agujero en el clipPath.
+      // Es perezoso: el tablero solo lo llama si hay algo HTML que recortar.
+      tablero?.actualizar(() => {
+        const ajenas = remotos ? remotos.siluetas() : [];
+        const mia = darSilueta();
+        return mia ? [mia, ...ajenas] : ajenas;
+      });
       // VISTA DEL PRESENTADOR: mientras se estÃ¡ en el atril, la pantallita
       // inferior izquierda repite la pizarra (que queda a las espaldas) para
       // no tener que dejar de mirar a la clase.
@@ -1531,16 +1540,19 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       escuchar: (evento, fn) => remotos?.escucharSignaling(evento, fn) ?? (() => {}),
     },
     obtenerFlujoLocal: () => camaraWeb?.obtenerFlujo() ?? null,
+    obtenerFlujoMicrofono: () => obtenerFlujoMicrofono(),
+    volumen: () => volumenGeneral,
     posicionCabeza: (id) => remotos?.posicionCabeza(id) ?? null,
     anchoEtiqueta: () => remotos?.anchoEtiqueta() ?? 4.4,
     nombreDe: (id) => remotos?.nombreDe(id) ?? "",
     limpiadores: limpiadoresDePartida,
   });
 
-  // El id propio de socket hace falta para el perfect negotiation (no
-  // crear un par consigo mismo y saber si una oferta entrante es glare).
-  const idSocketPropio = remotos?.miId();
-  if (idSocketPropio) videoSalon.fijarId(idSocketPropio);
+  // El id propio de socket hace falta ANTES de ofrecer nada: si se quedara
+  // vacío, las ofertas de la gente que ya está en la sala se descartarían
+  // como propias y sus cámaras se quedarían en negro. Se fija aquí (si ya se
+  // sabe) y luego en cada aviso de participantes (ver más abajo).
+  videoSalon.fijarId(remotos?.miId() ?? "");
 
   // -----------------------------------------------------------------------
   // SALIR DE LA CLASE / PARTIDA â†’ vuelve al panel con el que iniciaste sesiÃ³n
@@ -1646,6 +1658,10 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     if (accion === "microfono") {
       void alternarMicrofono().then((estado) => {
         reflejarBarra();
+        // La voz viaja P2P por los mismos pares WebRTC que la webcam: se
+        // publica el estado a la sala y se enchufa (o desenchufa) la pista
+        // de audio. Así el otro LEE lo que se habla, no solo ve el cuadrito.
+        videoSalon?.publicarEstadoMicrofono(estado === "encendido");
         if (estado === "encendido") barra?.mostrarGlobo("Micrófono encendido");
         else if (estado === "apagado") barra?.mostrarGlobo("Micrófono apagado");
         else if (estado === "sin-permiso") barra?.mostrarGlobo("Sin permiso de micrófono");
@@ -1679,9 +1695,9 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     if (tecla === "e") func.alternarSentado();
     if (tecla === "h") func.alternarMano();
 
-    // P abre el menÃº del tablero estando en el atril o acercÃ¡ndose a Ã©l:
-    // quien se pone delante de la pizarra quiere publicar, con o sin R.
-    if (tecla === "p" && (func.enElAtril() || func.estado().cercaDelAtril)) {
+    // P abre el menÃº del tablero SOLO en el atril: publicar, presentar y
+    // limpiar son cosas de quien estÃ¡ presentando, no de quien estÃ¡ de cerca.
+    if (tecla === "p" && func.enElAtril()) {
       tablero?.abrirMenu();
     }
 
@@ -1700,19 +1716,20 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       }
     }
 
-    if (evento.key === "ArrowRight") tablero?.cambiarDiapositiva(1);
-    if (evento.key === "ArrowLeft") tablero?.cambiarDiapositiva(-1);
+    // Las flechas cambian la diapositiva de TODA la clase: solo quien está en
+    // el atril las manda (dentro de cambiarDiapositiva se comprueba igual).
+    if (func.enElAtril() && evento.key === "ArrowRight") tablero?.cambiarDiapositiva(1);
+    if (func.enElAtril() && evento.key === "ArrowLeft") tablero?.cambiarDiapositiva(-1);
 
     if (func.enElAtril() && evento.key === " ") {
       evento.preventDefault();
       tablero?.alternarPausa();
     }
 
-    // Limpiar el tablero compartido solo lo hace el equipo docente: un
-    // estudiante no borra en mitad de una clase lo que estÃ¡ presentando otro.
-    const rol = obtenerSesion()?.rol;
-    const puedeLimpiar = rol === "docente" || rol === "admin";
-    if (func.enElAtril() && puedeLimpiar && (evento.key === "Delete" || evento.key === "Backspace")) {
+    // Limpiar el tablero lo hace quien estÃ¡ EN EL ATRIL, del rol que sea
+    // (docente, admin o estudiante). La posiciÃ³n es la que da permiso: el
+    // que ocupa el atril es quien presenta y maneja la pizarra de todos.
+    if (func.enElAtril() && (evento.key === "Delete" || evento.key === "Backspace")) {
       tablero?.limpiar();
     }
   };

@@ -87,7 +87,15 @@ export interface Participante {
 export type MensajeTablero =
   | { tipo: "imagen"; imagen: string }
   | { tipo: "youtube"; url: string }
+  | { tipo: "notas"; texto: string }
   | { tipo: "limpiar" };
+
+/**
+ * Tope de las notas del tablero, en caracteres. Un bloc de notas de clase
+ * no necesita megas: con 50k hay de sobra y evita que alguien mande
+ * megas de texto por mensaje reenviándolos a toda la sala.
+ */
+export const MAX_NOTAS_CARACTERES = 50_000;
 
 /**
  * Tope de un mensaje de tablero, en caracteres. Lo que sale del cliente
@@ -110,6 +118,9 @@ function esMensajeTablero(valor: unknown): valor is MensajeTablero {
     );
   }
   if (m.tipo === "youtube") return typeof m.url === "string" && m.url.length <= 500;
+  if (m.tipo === "notas") {
+    return typeof m.texto === "string" && m.texto.length <= MAX_NOTAS_CARACTERES;
+  }
   return false;
 }
 

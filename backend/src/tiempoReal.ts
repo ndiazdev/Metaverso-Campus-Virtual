@@ -70,6 +70,7 @@ export interface EstadoAvatar {
 type MensajeTablero =
   | { tipo: "imagen"; imagen: string }
   | { tipo: "youtube"; url: string }
+  | { tipo: "notas"; texto: string }
   | { tipo: "limpiar" };
 
 /** Una persona dentro de una sala. */
@@ -110,6 +111,8 @@ const MAX_PARTICIPANTES_POR_SALA = 60;
 const MAX_TABLERO_POR_SEGUNDO = 8;
 /** Tope de un mensaje de tablero, en caracteres (≈4 MB de data URL). */
 const MAX_TABLERO_CARACTERES = 4_000_000;
+/** Tope de las notas del tablero (texto plano; un bloc de clase no necesita megas). */
+const MAX_NOTAS_CARACTERES = 50_000;
 
 /** Nombre de la sala de socket.io a partir del código de la clase. */
 function nombreSala(codigo: string): string {
@@ -187,6 +190,10 @@ function sanearMensajeTablero(valor: unknown): MensajeTablero | null {
   }
   if (m.tipo === "youtube" && typeof m.url === "string" && m.url.length <= 500) {
     return { tipo: "youtube", url: m.url };
+  }
+  if (m.tipo === "notas") {
+    if (typeof m.texto !== "string" || m.texto.length > MAX_NOTAS_CARACTERES) return null;
+    return { tipo: "notas", texto: m.texto };
   }
   return null;
 }
@@ -525,14 +532,18 @@ export function adjuntarTiempoReal(servidorHttp: ServidorHttp): ServidorSocket {
       const codigo = socket.data.codigoSala as string | undefined;
       if (!codigo) return;
 
-      const encendida = (datos as { encendida?: unknown } | null)?.encendida === true;
+      const d = (datos ?? {}) as { encendida?: unknown; micro?: unknown };
+      const encendida = d.encendida === true;
+      const micro = d.micro === true;
       const sala = salas.get(codigo);
       const participante = sala?.participantes.get(socket.id);
       if (!sala || !participante) return;
 
       participante.camaraEncendida = encendida;
-      // Avisa al resto de la sala (sin guardarlo: es estado en vivo).
-      socket.to(nombreSala(codigo)).emit("video:estado", { id: socket.id, encendida });
+      // Avisa al resto de la sala (sin guardarlo: es estado en vivo). El flag
+      // `micro` viaja junto al de la cámara: el otro lado cierra el par
+      // WebRTC solo cuando se apagan LOS DOS (con el micrófono basta).
+      socket.to(nombreSala(codigo)).emit("video:estado", { id: socket.id, encendida, micro });
     });
 
     /** Reenvía un mensaje WebRTC a UN socket concreto de la misma sala. */
