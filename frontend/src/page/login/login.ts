@@ -63,7 +63,7 @@ const ESTILOS = `
       radial-gradient(circle at 14% 18%, rgba(255,255,255,0.06), transparent 48%),
       radial-gradient(circle at 86% 84%, rgba(255,255,255,0.05), transparent 52%),
       linear-gradient(rgba(12,13,16,0.88), rgba(12,13,16,0.88)),
-      url("/images/fondologin.jpeg");
+      url(`${import.meta.env.BASE_URL}images/fondologin.jpeg`);
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;

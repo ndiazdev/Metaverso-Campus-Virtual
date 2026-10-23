@@ -24,7 +24,7 @@ export const LOGO_URL =
 // sobre fondo oscuro no se lee. Quién decide cuál de las dos se ve es el CSS,
 // según <html data-tema="oscuro"> —no se lee el tema en JS—, para que el
 // cambio de tema desde Ajustes actualice el logo al instante, sin repintar.
-export const LOGO_OSCURO_URL = "/images/Logo_Blanco2.png";
+export const LOGO_OSCURO_URL = `${import.meta.env.BASE_URL}images/Logo_Blanco2.png`;
 
 
 // ============================================================
