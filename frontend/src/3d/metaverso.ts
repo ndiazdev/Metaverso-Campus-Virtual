@@ -23,7 +23,14 @@ import { crearMenuAjustes, leerVolumen, guardarVolumen, type MenuAjustes } from 
 import { crearBarraUsuario, type BarraUsuario, type AccionBarra } from "../ui/barraUsuario";
 import { alternarMicrofono, estadoMicrofono, liberarMicrofono, obtenerFlujoMicrofono } from "../ui/microfono";
 import { crearCamaraWeb, type CamaraWeb } from "../ui/webcam";
+import {
+  mostrarPantallaCarga,
+  reiniciarPantallaCarga,
+  marcarSalonCargado,
+  ocultarPantallaCarga,
+} from "../ui/pantallaCarga";
 import { crearVideoSalon, type VideoSalon } from "../red/videoSalon";
+import { crearVideoTablero, type VideoTablero } from "../red/videoTablero";
 // TABLERO: PDF, vÃ­deo, YouTube y compartir pantalla viven en su propio archivo,
 // igual que la barra y los ajustes. El mapa solo lo importa y llama a su API.
 import { crearTablero, type Tablero } from "./tableroFuncionalidad";
@@ -170,6 +177,34 @@ refrescarAvisoRaton();
 const paresSillas: ParSilla[] = [];
 let atril: Atril | null = null;
 
+// PUNTOS DE APARICION QUE TRAE EL .GLB
+// Los empties "Spawn1".."Spawn12" (pasillos) y "Spawn_Profe" los lee cargarSalon
+// de los TransformNode del mapa. Si el .glb no los trae (export viejo), quedan
+// vacios y elegirPuntoAparicion() usa las coordenadas de respaldo de abajo.
+const puntosAparicion: { nombre: string; posicion: BABYLON.Vector3 }[] = [];
+let puntoAparicionProfe: BABYLON.Vector3 | null = null;
+
+// Coordenadas EXACTAS de los empties Spawn1..Spawn12 / Spawn_Profe del mapa,
+// ya en unidades del mundo (escala y centrado del salón aplicados). Son el
+// respaldo cuando el .glb que llega al navegador no trae esos empties (una
+// copia vieja en caché, por ejemplo): así el spawn sigue cayendo en los
+// pasillos que marcó el modelo en Blender.
+const SPAWNS_ALUMNOS_FIJOS: ReadonlyArray<readonly [number, number]> = [
+  [-0.66, 0.22],
+  [5.46, 0.22],
+  [-7.11, 0.22],
+  [11.43, 0.22],
+  [11.43, 7.93],
+  [-7.11, 7.93],
+  [5.46, 7.93],
+  [-0.66, 7.93],
+  [11.43, -7.49],
+  [-7.11, -7.49],
+  [5.46, -7.49],
+  [-0.66, -7.49],
+];
+const SPAWN_PROFE_FIJO: readonly [number, number] = [18.15, -1.36];
+
 // AABB del mesh "room" en coordenadas de mundo.
 // Los "empty" del .glb (sit_*, TEACH_01, tablero_01, Plane.003...) son TransformNode y
 // Babylon NO puede colisionar contra ellos: el motor de colisiones solo recorre mallas
@@ -293,19 +328,78 @@ function empujarFueraDeObstaculos(posicion: BABYLON.Vector3): void {
   }
 }
 
+// --- HOLGURA RESPECTO A LA PARED -----------------------------------------
+// `limitesSalon` sale de medirInteriorDelSalon y, si esa medida falla, queda
+// como la caja entera del parque: puede llegar hasta la pared o pasarla. Por
+// eso el spawn se valida aqui, con rayos reales contra la estructura, y no solo
+// con la caja. Es el UNICO punto de control: da igual si el punto viene de un
+// empty, del respaldo fijo o del plan B por sillas.
+const MARGEN_PARED = RADIO_PERSONAJE + 0.8;
+
+// Distancia horizontal a la estructura mas cercana (muro, ventana, cortina) con
+// rayos a dos alturas y 12 rumbos. Si no hay nada dentro de `alcance`, devuelve
+// `alcance` (sirve como "hay sitio de sobra").
+function distanciaAPared(
+  escena: BABYLON.Scene,
+  pos: BABYLON.Vector3,
+  alcance: number
+): number {
+  let minima = alcance;
+  for (const h of [1.5, 3.5]) {
+    const origen = new BABYLON.Vector3(pos.x, pos.y + h, pos.z);
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2;
+      const dir = new BABYLON.Vector3(Math.sin(a), 0, Math.cos(a));
+      const golpe = escena.pickWithRay(
+        new BABYLON.Ray(origen, dir, alcance),
+        esMallaEstructura
+      );
+      if (golpe?.hit && golpe.distance < minima) minima = golpe.distance;
+    }
+  }
+  return minima;
+}
+
+// Si el punto no sirve, busca en circulos crecientes el sitio valido mas cercano:
+// fuera de muebles, dentro del salon Y con holgura real respecto a las paredes.
+function sitioSeguroCerca(escena: BABYLON.Scene, inicio: BABYLON.Vector3): BABYLON.Vector3 {
+  const sirve = (p: BABYLON.Vector3): boolean =>
+    posicionValida(p) &&
+    distanciaAPared(escena, p, MARGEN_PARED + 0.5) >= MARGEN_PARED;
+
+  if (sirve(inicio)) return inicio;
+
+  for (let r = 0.75; r <= 12; r += 0.75) {
+    const pasos = Math.max(8, Math.round(r * 6));
+    for (let i = 0; i < pasos; i++) {
+      const a = (i / pasos) * Math.PI * 2;
+      const p = new BABYLON.Vector3(
+        inicio.x + Math.sin(a) * r,
+        SUELO_Y,
+        inicio.z + Math.cos(a) * r
+      );
+      if (sirve(p)) return p;
+    }
+  }
+  console.warn("[spawn] no se hallo un sitio con holgura; se deja el punto original.");
+  return inicio;
+}
+
 // ---------------------------------------------------------------
-// PUNTOS DE APARICION POR ROL Y PERSONA
+// PUNTOS DE APARICION
 //
-// Antes todo el mundo aparecia en el mismo punto hardcodeado (0, SUELO_Y, -8),
-// asi que quienes entraban a la vez salian apilados uno encima del otro. Ahora
-// cada persona tiene su propio sitio de entrada:
+// El .glb trae empties con los sitios de entrada (los pone el modelo en
+// Blender): "Spawn1".."Spawn12" en los pasillos y "Spawn_Profe" delante de la
+// clase. El personaje se coloca con SU ORIGEN (a los pies del modelo) sobre el
+// origen del empty, asi que el y=SUELO_Y es el unico que manda: los empties
+// solo aportan X/Z.
 //
-//   · docente/admin  -> DETRAS DEL ATRIL, mirando a la clase (igual que la R).
-//   · estudiante/invitado -> DE PIE JUNTO A UN PUPITRE, repartidos por el aula.
+//   · estudiante/invitado -> UNO AL AZAR de Spawn1..Spawn12, mirando al frente.
+//   · docente/admin       -> Spawn_Profe, mirando a la clase.
 //
-// El reparto es DETERMINISTA por CORREO (la identidad estable del proyecto):
-// la misma persona siempre aparece en el mismo pupitre ("mesa asignada") y los
-// distintos se distribuyen por las sillas via hash(correo) % nº de sitios.
+// Si el mapa no trae esos empties (copia vieja en cache), se usan las
+// coordenadas exactas de esos mismos pasillos (SPAWNS_ALUMNOS_FIJOS y
+// SPAWN_PROFE_FIJO), asi que el resultado es identico.
 //
 // Es 100% client-side: cada cliente elige su spawn y lo publica por red
 // (estadoLocal ya manda personaje.raiz.position), asi que no hay que tocar el
@@ -327,56 +421,68 @@ function elegirPuntoAparicion(): { posicion: BABYLON.Vector3; yaw: number } {
   const rol = sesion?.rol ?? "estudiante";
   const respaldo = { posicion: new BABYLON.Vector3(0, SUELO_Y, -8), yaw: 0 };
 
-  // --- DOCENTE / ADMIN: detras del atril, mirando a la clase ---------------
-  // Misma geometria que el teletransporte R (funcionalidades.alternarAtril):
-  // "al frente" es hacia donde estan los alumnos (centro de los obstaculos).
-  if ((rol === "docente" || rol === "admin") && atril) {
-    let centroX = 0;
-    let centroZ = 0;
-    for (const obs of obstaculosSolidos) {
-      centroX += (obs.min.x + obs.max.x) / 2;
-      centroZ += (obs.min.z + obs.max.z) / 2;
-    }
-    centroX /= Math.max(1, obstaculosSolidos.length);
-    centroZ /= Math.max(1, obstaculosSolidos.length);
+  const esDocente = rol === "docente" || rol === "admin";
 
-    const alFrente = new BABYLON.Vector3(
-      centroX - atril.posicionAtril.x,
-      0,
-      centroZ - atril.posicionAtril.z
-    );
-    if (alFrente.lengthSquared() < 1e-6) {
-      alFrente.x = 1;
-      alFrente.z = 0;
-    }
-    alFrente.normalize();
+  // Rumbo para mirar al frente (atril/tablero). El convenio del proyecto es
+  // yaw = atan2(dir.x, dir.z); sin atril se mira a +X, que es el frente del aula.
+  const mirarAlFrente = (posicion: BABYLON.Vector3): number =>
+    atril
+      ? Math.atan2(
+          atril.posicionAtril.x - posicion.x,
+          atril.posicionAtril.z - posicion.z
+        )
+      : Math.PI / 2;
 
-    // Media profundidad de la caja del atril proyectada sobre la direccion de
-    // la clase, para no salir dentro de la madera.
-    let mediaFondo = 0.6;
-    let distanciaMejor = Infinity;
-    for (const obs of obstaculosSolidos) {
-      const dx = (obs.min.x + obs.max.x) / 2 - atril.posicionAtril.x;
-      const dz = (obs.min.z + obs.max.z) / 2 - atril.posicionAtril.z;
-      const distancia = Math.hypot(dx, dz);
-      if (distancia < distanciaMejor) {
-        distanciaMejor = distancia;
-        mediaFondo =
-          (Math.abs(alFrente.x) * (obs.max.x - obs.min.x) +
-            Math.abs(alFrente.z) * (obs.max.z - obs.min.z)) /
-          2;
-      }
-    }
-
-    const posicion = new BABYLON.Vector3(
-      atril.posicionAtril.x - alFrente.x * (mediaFondo + RADIO_PERSONAJE + 0.35),
-      SUELO_Y,
-      atril.posicionAtril.z - alFrente.z * (mediaFondo + RADIO_PERSONAJE + 0.35)
-    );
+  // --- PUNTOS DEL MAPA (o sus coordenadas de respaldo) ---------------------
+  // 1) DOCENTE / ADMIN: "Spawn_Profe", mirando al centro de la clase.
+  if (esDocente) {
+    const puntoProfe =
+      puntoAparicionProfe ??
+      new BABYLON.Vector3(SPAWN_PROFE_FIJO[0], SUELO_Y, SPAWN_PROFE_FIJO[1]);
+    const posicion = new BABYLON.Vector3(puntoProfe.x, SUELO_Y, puntoProfe.z);
     if (haySolape(posicion)) empujarFueraDeObstaculos(posicion);
     recortarAlSalon(posicion, RADIO_PERSONAJE);
-    // Convencion: yaw = atan2(dir.x, dir.z) (yaw=0 mira a +Z).
-    return { posicion, yaw: Math.atan2(alFrente.x, alFrente.z) };
+
+    let yaw = Math.PI;
+    if (obstaculosSolidos.length) {
+      let centroX = 0;
+      let centroZ = 0;
+      for (const obs of obstaculosSolidos) {
+        centroX += (obs.min.x + obs.max.x) / 2;
+        centroZ += (obs.min.z + obs.max.z) / 2;
+      }
+      centroX /= obstaculosSolidos.length;
+      centroZ /= obstaculosSolidos.length;
+      if (Math.hypot(centroX - posicion.x, centroZ - posicion.z) > 1e-6) {
+        yaw = Math.atan2(centroX - posicion.x, centroZ - posicion.z);
+      }
+    }
+    return { posicion, yaw };
+  }
+
+  // 2) ESTUDIANTE / INVITADO: uno al azar de "Spawn1".."Spawn12", de pie en el
+  // pasillo y mirando al frente. Se recorre el resto de puntos si el elegido
+  // cae dentro de un mueble; si ninguno sirve, se cae al reparto por sillas.
+  if (!esDocente) {
+    const puntos = puntosAparicion.length
+      ? puntosAparicion
+      : SPAWNS_ALUMNOS_FIJOS.map(([x, z], i) => ({
+          nombre: `Spawn${i + 1}`,
+          posicion: new BABYLON.Vector3(x, SUELO_Y, z),
+        }));
+
+    const inicio = Math.floor(Math.random() * puntos.length);
+    for (let intento = 0; intento < puntos.length; intento++) {
+      const punto = puntos[(inicio + intento) % puntos.length];
+      const posicion = new BABYLON.Vector3(punto.posicion.x, SUELO_Y, punto.posicion.z);
+      if (haySolape(posicion)) empujarFueraDeObstaculos(posicion);
+      recortarAlSalon(posicion, RADIO_PERSONAJE);
+      if (!posicionValida(posicion)) continue;
+      console.log(
+        `Aparición: ${punto.nombre} (${posicion.x.toFixed(2)}, ${posicion.z.toFixed(2)}) rol=${rol}`
+      );
+      return { posicion, yaw: mirarAlFrente(posicion) };
+    }
   }
 
   // --- ESTUDIANTE / INVITADO: de pie junto a un pupitre --------------------
@@ -932,6 +1038,37 @@ function medirInteriorDelSalon(
   const todasLasMallas = resultado.meshes;
   const todosLosNodos = [...resultado.transformNodes, ...resultado.meshes];
 
+  // EMPTIES DE APARICION: "Spawn1".."Spawn12" (pasillos) y "Spawn_Profe".
+  // El loader glTF convierte los empties de Blender en TransformNode; su
+  // absolutePosition ya sale en mundo (escala y centrado del salon aplicados).
+  // Si el .glb no los trae se avisa y elegirPuntoAparicion() usa su respaldo.
+  puntosAparicion.length = 0;
+  puntoAparicionProfe = null;
+  const esSpawnProfe = (nombre: string): boolean => /^spawn[_\s-]*profe$/i.test(nombre);
+  const esSpawnAlumno = (nombre: string): boolean => /^spawn\s*\d+$/i.test(nombre);
+  for (const nodo of todosLosNodos) {
+    if (esSpawnProfe(nodo.name)) {
+      nodo.computeWorldMatrix(true);
+      puntoAparicionProfe = nodo.absolutePosition.clone();
+    } else if (esSpawnAlumno(nodo.name)) {
+      nodo.computeWorldMatrix(true);
+      puntosAparicion.push({
+        nombre: nodo.name,
+        posicion: nodo.absolutePosition.clone(),
+      });
+    }
+  }
+  if (puntosAparicion.length || puntoAparicionProfe) {
+    console.log(
+      `Spawns del mapa -> ${puntosAparicion.map((p) => p.nombre).join(", ") || "ninguno"}` +
+        (puntoAparicionProfe ? " + Spawn_Profe" : "")
+    );
+  } else {
+    console.warn(
+      "El mapa no trae empties Spawn1..Spawn12 / Spawn_Profe: se usan las coordenadas de respaldo de los pasillos."
+    );
+  }
+
   todasLasMallas.forEach((mesh) => {
     const nombre = mesh.name.toLowerCase();
 
@@ -939,11 +1076,27 @@ function medirInteriorDelSalon(
     // checkCollisions, Babylon y el corrector pelean por la misma posiciÃ³n y el
     // elipsoide vuelve a quedarse atrapado dentro de la laja de la mesa.
     if (esMuebleNombre(nombre)) {
-      mesh.checkCollisions = false;
-
       mesh.computeWorldMatrix(true);
       mesh.refreshBoundingInfo(false, false);
       const bb = mesh.getBoundingInfo().boundingBox;
+      const ancho = bb.maximumWorld.x - bb.minimumWorld.x;
+      const fondo = bb.maximumWorld.z - bb.minimumWorld.z;
+
+      // "cabinet.003" agrupa en una sola malla las taquillas, ventanas y
+      // cortinas de todo el perimetro: su caja mide 54 x 27 u y, metida en
+      // obstaculosSolidos, tapaba el salon entero (todos los spawns
+      // "solapaban" con ella y el avatar acababa pegado a la pared). Una pieza
+      // de mobiliario real no pasa de 6 u de lado, asi que por encima de eso
+      // se trata como estructura: colision del motor y fuera de las cajas.
+      if (ancho > 6 || fondo > 6) {
+        mesh.checkCollisions = true;
+        return;
+      }
+
+      // Mueble normal: colision propia (ver ObstaculoSolido). Si tambien le
+      // damos checkCollisions, Babylon y el corrector pelean por la misma
+      // posicion y el elipsoide vuelve a quedarse atrapado dentro de la mesa.
+      mesh.checkCollisions = false;
       obstaculosSolidos.push({
         nombre: mesh.name,
         min: bb.minimumWorld.clone(),
@@ -1298,6 +1451,11 @@ function medirInteriorDelSalon(
 // en este archivo, que es el del mapa y del personaje.
 let tablero: Tablero | null = null;
 
+// VÍDEO DEL TABLERO EN DIRECTO (WebRTC): el docente sube un vídeo y su flujo
+// se manda a la sala. Vive aquí para que el tablero lo use desde su closure
+// (se crea más abajo, cuando la presencia ya tiene socket).
+let videoTablero: VideoTablero | null = null;
+
 // Volumen general (0..1). Vive aquÃ­ porque lo aplican a la vez el menÃº de ajustes
 // y el botÃ³n ðŸ”Š de la barra; se persiste en el navegador desde src/ui/menuAjustes.ts.
 let volumenGeneral = leerVolumen();
@@ -1399,6 +1557,9 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       // mÃ¡s abajo; sin conexiÃ³n no se manda nada (la red lo resuelve
       // reenviando cuando alguien entra).
       alPublicar: (mensaje) => remotos?.publicarTablero(mensaje),
+      // El vídeo subido desde el ordenador NO se proyecta: su flujo sale por
+      // WebRTC para que cada alumno lo vea en su cajita personal.
+      alPublicarVideo: (flujo) => videoTablero?.publicar(flujo),
     });
   } else {
     console.warn("Sin malla de tablero en este mapa: no habrá proyección.");
@@ -1421,6 +1582,12 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     // junto a un pupitre repartidos por el aula (mesa asignada por correo).
     // Antes todo el mundo salia apilado en el mismo (0, SUELO_Y, -8).
     const aparicion = elegirPuntoAparicion();
+    const original = aparicion.posicion.clone();
+    aparicion.posicion.copyFrom(sitioSeguroCerca(scene, aparicion.posicion));
+    console.log(
+      `[spawn] rol=${obtenerSesion()?.rol} original=(${original.x.toFixed(2)}, ${original.z.toFixed(2)}) ` +
+        `final=(${aparicion.posicion.x.toFixed(2)}, ${aparicion.posicion.z.toFixed(2)})`
+    );
     personaje.raiz.position.copyFrom(aparicion.posicion);
 
     // Orientar cuerpo y camara al yaw del punto de aparicion. La raiz glTF
@@ -1454,6 +1621,10 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   } catch (error) {
     console.error("Error al cargar el personaje:", error);
   }
+
+  // La skin ya se eligio (cargarPersonaje espera a esa ventana): desde aqui el
+  // usuario ve la pantalla de carga hasta que el salon termina de montarse.
+  reiniciarPantallaCarga();
 
   // ---------------------------------------------------------------
   // FUNCIONALIDADES DEL AVATAR â†’ src/3d/funcionalidades.ts
@@ -1638,6 +1809,10 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
       // y para saber si una oferta entrante es un "glare" (perfect negotiation).
       if (miId) videoSalon?.fijarId(miId);
       videoSalon?.actualizarParticipantes(participantes.map((p) => p.id));
+      // Vídeo del tablero: mismo id y misma lista (así ofrece el flujo a quien
+      // acaba de entrar si el docente está publicando).
+      if (miId) videoTablero?.fijarId(miId);
+      videoTablero?.actualizarParticipantes(participantes.map((p) => p.id));
 
       // Si ENTRA alguien a la clase y aquÃ­ hay algo en el tablero, se le
       // reenvÃ­a al momento: quien llega ve lo que se estÃ¡ presentando sin
@@ -1706,6 +1881,22 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   videoSalon.fijarId(remotos?.miId() ?? "");
 
   // -----------------------------------------------------------------------
+  // VÍDEO DEL TABLERO: el vídeo subido desde el ordenador viaja P2P (el
+  // servidor solo señaliza). El alumno lo ve en su cajita personal y el profe
+  // en la vista del tablero. Usa los mismos eventos de sala que la presencia.
+  // -----------------------------------------------------------------------
+  videoTablero = crearVideoTablero({
+    signaling: {
+      emitir: (evento, datos) => remotos?.emitirSignaling(evento, datos),
+      escuchar: (evento, fn) => remotos?.escucharSignaling(evento, fn) ?? (() => {}),
+    },
+    alRecibir: (flujo) => tablero?.mostrarVideoDeLaSala(flujo),
+    limpiadores: limpiadoresDePartida,
+  });
+  videoTablero.fijarId(remotos?.miId() ?? "");
+  videoTablero.actualizarParticipantes(remotos?.participantes().map((p) => p.id) ?? []);
+
+  // -----------------------------------------------------------------------
   // SALIR DE LA CLASE / PARTIDA â†’ vuelve al panel con el que iniciaste sesiÃ³n
   // -----------------------------------------------------------------------
   function salirDeLaPartida(): void {
@@ -1724,6 +1915,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     tablero = null;
     camaraWeb = null;
     videoSalon = null;
+    videoTablero = null;
     listado = null;
     remotos = null;
 
@@ -1916,6 +2108,9 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   // la escena con __metaverso.camara / __metaverso.personaje
   (window as unknown as Record<string, unknown>).__metaverso = { camara, personaje, escena: scene };
 
+  // Salon montado: la pantalla de carga puede completar la barra y retirarse.
+  marcarSalonCargado();
+
   return scene;
 };
 
@@ -1925,6 +2120,10 @@ function entrarAlSalon(clase: Clase) {
   // enlace del navegador y pasÃ¡rselo a otro para que entre a la MISMA.
   escribirClaseEnLaUrl(clase.codigo);
 
+  // Tapa el canvas mientras se importa el mapa (el render loop arranca antes
+  // de que el salon exista). Queda por debajo de la ventana de skins.
+  mostrarPantallaCarga();
+
   const alRedimensionar = () => engine.resize();
   window.addEventListener("resize", alRedimensionar);
   limpiadoresDePartida.push(() => window.removeEventListener("resize", alRedimensionar));
@@ -1933,6 +2132,7 @@ function entrarAlSalon(clase: Clase) {
     engine.runRenderLoop(() => escena.render());
   }).catch((error) => {
     console.error("ERROR AL CREAR LA ESCENA:", error);
+    ocultarPantallaCarga();
     alert("Ocurrió un error cargando el salón. Revisa la consola (F12).");
   });
 }

@@ -20,7 +20,8 @@
  *   tablero.destruir();         // al salir de la partida
  *
  * QUÉ SABE HACER
- *   · PDF → diapositivas (pdf.js), imágenes/galerías y vídeo del ordenador.
+ *   · PDF → diapositivas (pdf.js), imágenes/galerías y vídeo del ordenador
+ *     (se proyecta en la pizarra y se retransmite a la sala por WebRTC).
  *   · Notas de la pizarra escritas con el TECLADO (como un bloc de notas) y
  *     descargables como archivo de texto (.txt), en vez de PDF.
  *   · Link de YouTube montado con la IFrame Player API, para que 🔊 lo silencie
@@ -72,6 +73,12 @@ export interface OpcionesTablero {
    */
   alPublicar?: (mensaje: MensajeTablero) => void;
   /**
+   * VÍDEO DEL ORDENADOR EN DIRECTO: el flujo que sale del <video> subido
+   * (captureStream) se manda a la sala por WebRTC. `null` al retirarlo.
+   * Lo usan los alumnos para verlo en la pizarra 3D.
+   */
+  alPublicarVideo?: (flujo: MediaStream | null) => void;
+  /**
    * Rol de quien maneja este tablero. El menú "Publicar" se FILTRA con él:
    * docente y admin publican de todo; estudiantes (e invitados) solo
    * diapositivas y notas, que es lo que se les permite subir.
@@ -88,6 +95,11 @@ export interface Tablero {
   mostrarImagen: (url: string) => void;
   /** Proyecta un vídeo por URL (blob o remota) y lo deja en bucle. */
   mostrarVideo: (url: string) => void;
+  /**
+   * Pinta el vídeo EN DIRECTO que publicó otro de la sala (WebRTC) en la
+   * pizarra 3D. `null` lo retira.
+   */
+  mostrarVideoDeLaSala: (flujo: MediaStream | null) => void;
   /** Devuelve false si la cadena no contiene un ID de YouTube válido. */
   publicarYoutube: (url: string) => boolean;
   /** Pide permiso al navegador y proyecta la pantalla/ventana/pestaña elegida. */
@@ -151,6 +163,11 @@ interface ReproductorYoutube {
   setVolume: (volumen: number) => void; // 0..100
   mute: () => void;
   unMute: () => void;
+  playVideo: () => void;
+  pauseVideo: () => void;
+  seekTo: (segundos: number, permitirAvance: boolean) => void;
+  getCurrentTime: () => number;
+  getPlayerState: () => number;
   destroy: () => void;
 }
 
@@ -160,7 +177,10 @@ interface FabricaYoutube {
     opciones: {
       videoId?: string;
       playerVars?: Record<string, number | string | boolean>;
-      events?: Record<string, (evento: { target: ReproductorYoutube }) => void>;
+      events?: Record<
+        string,
+        (evento: { target: ReproductorYoutube; data?: number }) => void
+      >;
     }
   ) => ReproductorYoutube;
 }
@@ -300,7 +320,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   /** VISTA DEL PRESENTADOR: la pantallita de quien está en el atril. */
   const estiloMini = document.createElement("style");
   estiloMini.textContent =
-    ".tb-mini{position:fixed;left:20px;bottom:96px;z-index:1900;width:min(30vw,380px);" +
+    ".tb-mini{position:fixed;right:20px;bottom:96px;z-index:1900;width:min(30vw,380px);" +
     "border-radius:12px;overflow:hidden;background:rgba(15,23,42,0.96);" +
     "border:1px solid rgba(255,255,255,0.22);box-shadow:0 8px 24px rgba(0,0,0,0.45);" +
     "font-family:sans-serif;display:none;cursor:pointer}" +
@@ -311,6 +331,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     ".tb-mini-zona{position:relative;width:100%;aspect-ratio:16/9;background:#000;" +
     "display:flex;align-items:center;justify-content:center;overflow:hidden}" +
     ".tb-mini-zona img{width:100%;height:100%;object-fit:contain;background:#000;display:block}" +
+    ".tb-mini-zona video{width:100%;height:100%;object-fit:contain;background:#000;display:block}" +
     ".tb-mini-zona .tb-mini-texto{margin:0;padding:10px 12px;width:100%;height:100%;" +
     "box-sizing:border-box;overflow:auto;background:#fffdf7;color:#1f2937;" +
     "font-size:13px;line-height:1.45;white-space:pre-wrap;overflow-wrap:break-word}" +
@@ -325,12 +346,23 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   let indiceDiapositiva = 0;
   /** <video> que suena ahora (el subido o el de la pantalla compartida). */
   let videoElemento: HTMLVideoElement | null = null;
+  /** true si el <video> actual es un vídeo subido desde el ordenador. */
+  let videoLocalSubido = false;
   /** Textura de vídeo activa; se refresca a mano en cada frame. */
   let texturaVideo: BABYLON.VideoTexture | null = null;
+  /** La textura de vídeo actual es la del flujo remoto (no la del vídeo local). */
+  let texturaEsRemota = false;
+  /** Flujo EN DIRECTO que publicó otro (WebRTC): se pinta en la pizarra 3D. */
+  let flujoVideoRemoto: MediaStream | null = null;
+  /** <video> que reproduce el flujo remoto (fuente de la textura de la pizarra). */
+  let videoSala: HTMLVideoElement | null = null;
   /** Captura de pantalla en curso. Si no se para, el navegador no deja de grabar. */
   let flujoPantalla: MediaStream | null = null;
 
   let contenedorYoutube: HTMLDivElement | null = null;
+  /** Barra de mando del profesor (-10 s / pausa / +10 s), debajo de la caja. */
+  let barraYoutube: HTMLDivElement | null = null;
+  let botonPausaYoutube: HTMLButtonElement | null = null;
   let iframeYoutube: HTMLIFrameElement | null = null; // solo en el respaldo sin API
   let reproductorYoutube: ReproductorYoutube | null = null;
   let apiYoutubeLista: Promise<void> | null = null;
@@ -441,6 +473,10 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
       videoElemento.muted = volumen <= 0;
       videoElemento.volume = volumen;
     }
+    if (videoSala) {
+      videoSala.muted = volumen <= 0;
+      videoSala.volume = volumen;
+    }
     aplicarVolumenAlYoutube(); // el <iframe> no tiene `.volume`
   }
 
@@ -492,10 +528,33 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     try {
       reproductorYoutube = new fabrica.Player(ancla, {
         videoId: idVideo,
-        playerVars: { autoplay: 1, playsinline: 1, rel: 0 },
+        playerVars: {
+          autoplay: 1,
+          playsinline: 1,
+          rel: 0,
+          // SIN CONTROLES NATIVOS: el alumno solo mira (no pausa, no mueve, no
+          // salta). El profe manda con la barra propia, que sí está en la sala.
+          controls: 0,
+          disablekb: 1,
+          fs: 0,
+          iv_load_policy: 3,
+          modestbranding: 1,
+        },
         // En cuanto esté listo se le manda el volumen guardado, por si el usuario
         // tenía el 🔊 apagado antes de publicar el vídeo.
-        events: { onReady: () => aplicarVolumenAlYoutube() },
+        events: {
+          onReady: () => {
+            aplicarVolumenAlYoutube();
+            // La barra se crea para todos, pero solo se VE y recibe clics
+            // mientras estás EN EL ATRIL (ver intentarMoverBarraYoutube).
+            asegurarBarraYoutube();
+            actualizarBotonPausaYoutube();
+          },
+          onStateChange: () => {
+            // Si el vídeo se pausa/termina por su cuenta, el botón cambia solo.
+            actualizarBotonPausaYoutube();
+          },
+        },
       });
     } catch (error) {
       console.warn("No se pudo montar el reproductor de YouTube:", error);
@@ -504,6 +563,11 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
 
   function quitarYoutube(): void {
     youtubeActual = null;
+    if (barraYoutube) {
+      barraYoutube.remove();
+      barraYoutube = null;
+      botonPausaYoutube = null;
+    }
     if (reproductorYoutube) {
       try {
         reproductorYoutube.destroy();
@@ -566,11 +630,13 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   // notas son un panel lateral: por eso ese subsistema entero -que dibujaba
   // los "domos" verdes y trababa/crasheaba la pagina al acercarse alguien-
   // se elimino. Lo que va como TEXTURA en el tablero (PDF, imagenes,
-  // pantalla compartida) lo tapa el motor 3D solo.
+  // pantalla compartida) lo tapa el motor 3D solo; el video subido se pinta
+  // en la pizarra (y se retransmite por WebRTC a la sala).
   // -------------------------------------------------------------------------
 
   function actualizarPosicionYoutube(): void {
     if (!contenedorYoutube) return;
+    intentarMoverBarraYoutube();
 
     // La caja de YouTube es un panel PERSONAL FIJO (arriba a la derecha): no se
     // proyecta en la pizarra 3D, así que aquí no hay homografía ni recorte de
@@ -596,6 +662,167 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     contenedorYoutube.style.height = "min(16.875vw, 214px)";
     contenedorYoutube.style.borderRadius = "12px";
     contenedorYoutube.style.transform = "none";
+  }
+
+  /**
+   * CAJITA PERSONAL DEL VÍDEO EN DIRECTO: arriba a la derecha, el mismo hueco
+   * que YouTube (nunca se proyecta en la pizarra 3D). El alumno solo mira.
+   */
+  // -------------------------------------------------------------------------
+  // MANDO DEL VÍDEO (solo docente/admin)
+  // -------------------------------------------------------------------------
+
+  /**
+   * Barra pegada DEBAJO de la caja de YouTube, no encima: si tapara el iframe,
+   * el clic sobre el vídeo (y sus propios controles) quedaría muerto.
+   */
+  function asegurarBarraYoutube(): HTMLDivElement | null {
+    if (!contenedorYoutube) return null;
+    if (barraYoutube) {
+      barraYoutube.style.display = "flex";
+      return barraYoutube;
+    }
+
+    const barra = document.createElement("div");
+    barra.className = "yt-mando";
+    barra.style.position = "fixed";
+    barra.style.zIndex = "1451";
+    barra.style.display = "flex";
+    barra.style.gap = "6px";
+    barra.style.padding = "5px";
+    barra.style.borderRadius = "10px";
+    barra.style.background = "rgba(8,20,44,0.88)";
+    barra.style.border = "1px solid rgba(242,169,59,0.45)";
+    barra.style.boxShadow = "0 6px 18px rgba(0,0,0,0.45)";
+
+    const crearBoton = (texto: string, titulo: string, accion: () => void): HTMLButtonElement => {
+      const boton = document.createElement("button");
+      boton.type = "button";
+      boton.textContent = texto;
+      boton.title = titulo;
+      boton.style.flex = "1 1 0";
+      boton.style.height = "30px";
+      boton.style.border = "0";
+      boton.style.borderRadius = "7px";
+      boton.style.background = "rgba(255,255,255,0.10)";
+      boton.style.color = "#E2E8F0";
+      boton.style.fontSize = "12px";
+      boton.style.fontWeight = "600";
+      boton.style.cursor = "pointer";
+      boton.addEventListener("mouseenter", () => (boton.style.background = "rgba(255,255,255,0.22)"));
+      boton.addEventListener("mouseleave", () => (boton.style.background = "rgba(255,255,255,0.10)"));
+      boton.addEventListener("click", accion);
+      barra.appendChild(boton);
+      return boton;
+    };
+
+    crearBoton("-10 s", "Retroceder 10 segundos", () => mandarMandoYoutube("atras"));
+    botonPausaYoutube = crearBoton("Pausa", "Pausar o reanudar el vídeo", () =>
+      mandarMandoYoutube("pausa")
+    );
+    crearBoton("+10 s", "Adelantar 10 segundos", () => mandarMandoYoutube("adelante"));
+
+    document.body.appendChild(barra);
+    barraYoutube = barra;
+    intentarMoverBarraYoutube();
+    actualizarBotonPausaYoutube();
+    return barra;
+  }
+
+  function actualizarBotonPausaYoutube(): void {
+    if (!botonPausaYoutube) return;
+    let pausado = false;
+    try {
+      pausado = reproductorYoutube?.getPlayerState() === 2; // 2 = paused
+    } catch {
+      pausado = false;
+    }
+    botonPausaYoutube.textContent = pausado ? "Seguir" : "Pausa";
+  }
+
+  function intentarMoverBarraYoutube(): void {
+    if (!barraYoutube || !contenedorYoutube) return;
+    // MANDO SOLO PARA QUIEN ESTÁ EN EL ATRIL: el alumno sentado no ve la barra
+    // (ni puede pausar, retrasar ni adelantar nada).
+    if (!panelActivo) {
+      barraYoutube.style.display = "none";
+      return;
+    }
+    barraYoutube.style.display = "flex";
+    if (modoCompleto) {
+      // Pantalla en grande: la barra flota abajo en el centro, fuera del vídeo.
+      barraYoutube.style.left = "50%";
+      barraYoutube.style.right = "auto";
+      barraYoutube.style.top = "auto";
+      barraYoutube.style.bottom = "18px";
+      barraYoutube.style.transform = "translateX(-50%)";
+      barraYoutube.style.width = "min(60vw, 420px)";
+      return;
+    }
+    barraYoutube.style.left = "auto";
+    barraYoutube.style.right = "16px";
+    barraYoutube.style.top = "calc(16px + min(16.875vw, 214px) + 6px)";
+    barraYoutube.style.bottom = "auto";
+    barraYoutube.style.transform = "none";
+    barraYoutube.style.width = "min(30vw, 380px)";
+  }
+
+  /**
+   * Manda una orden al reproductor y la reenvía a la sala. Para "atrás"/
+   * "adelante" se calcula el segundo ABSOLUTO y se envía un "seek": así todos
+   * saltan al mismo punto aunque su reloj haya arrancado antes o después.
+   */
+  function mandarMandoYoutube(accion: "pausa" | "atras" | "adelante"): void {
+    if (!reproductorYoutube) return;
+
+    let tiempo = 0;
+    try {
+      tiempo = Math.max(0, reproductorYoutube.getCurrentTime() || 0);
+    } catch {
+      tiempo = 0;
+    }
+
+    let orden: "play" | "pause" | "seek" = "seek";
+    if (accion === "pausa") {
+      let pausado = false;
+      try {
+        pausado = reproductorYoutube.getPlayerState() === 2;
+      } catch {
+        pausado = false;
+      }
+      orden = pausado ? "play" : "pause";
+      if (orden === "play") reproductorYoutube.playVideo();
+      else reproductorYoutube.pauseVideo();
+    } else {
+      tiempo = accion === "atras" ? Math.max(0, tiempo - 10) : tiempo + 10;
+      reproductorYoutube.seekTo(tiempo, true);
+    }
+
+    actualizarBotonPausaYoutube();
+    // NO pasa por publicar(): el mando no es "lo que hay pintado" y no debe
+    // reenviarse a quien entre tarde a la clase.
+    opciones.alPublicar?.({ tipo: "youtube-mando", accion: orden, tiempo });
+  }
+
+  function aplicarMandoYoutube(mensaje: {
+    accion: "play" | "pause" | "seek";
+    tiempo: number;
+  }): void {
+    if (!reproductorYoutube) return;
+    try {
+      if (mensaje.accion === "play") {
+        reproductorYoutube.seekTo(mensaje.tiempo, true);
+        reproductorYoutube.playVideo();
+      } else if (mensaje.accion === "pause") {
+        reproductorYoutube.pauseVideo();
+        reproductorYoutube.seekTo(mensaje.tiempo, true);
+      } else {
+        reproductorYoutube.seekTo(mensaje.tiempo, true);
+      }
+      actualizarBotonPausaYoutube();
+    } catch (error) {
+      console.warn("No se pudo aplicar el mando del vídeo:", error);
+    }
   }
 
   function extraerIdYoutube(url: string): string | null {
@@ -770,6 +997,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
       material.diffuseTexture = null;
     }
     texturaVideo = null;
+    texturaEsRemota = false;
   }
 
   /**
@@ -783,6 +1011,8 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     quitarYoutube();
     limpiarTextura();
     detenerPantallaCompartida();
+    detenerVideoLocal();
+    quitarVideoSala();
     imagenActual = null;
   }
 
@@ -843,6 +1073,22 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     ordenPublicacion++; // invalida cualquier conversión en vuelo anterior
     ultimoMensaje = mensaje;
     encolar(mensaje);
+  }
+
+  /**
+   * El vídeo en directo NO es un mensaje del tablero: si se dejara el último
+   * mensaje guardado, `republicarContenido` se lo mandaría a quien entre
+   * después y pisaría el vídeo. Se olvida lo pendiente y lo recordado; el
+   * flujo se ofrece por WebRTC a los nuevos participantes.
+   */
+  function olvidarMensajeDelTablero(): void {
+    ordenPublicacion++;
+    mensajePendiente = null;
+    if (temporizadorPublicacion !== null) {
+      clearTimeout(temporizadorPublicacion);
+      temporizadorPublicacion = null;
+    }
+    ultimoMensaje = null;
   }
 
   /**
@@ -950,7 +1196,6 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     if (!caja || !textoNotas) return;
     textoNotas.value = texto;
     hayNotas = true;
-    if (pantalla) pantalla.isVisible = true;
     actualizarPosicionNotas();
 
     // PANTALLA EN GRANDE: si la caja no lleva aún el papel dentro (se abrió
@@ -983,6 +1228,12 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
    * el limpiar ya cierra la caja por su cuenta.
    */
   function aplicarMensaje(mensaje: MensajeTablero): void {
+    // Los mandos del vídeo NO son contenido: no se guardan como último mensaje
+    // (un "pausa" no debe reenviarse a quien entre después a la clase).
+    if (mensaje.tipo === "youtube-mando") {
+      aplicarMandoYoutube(mensaje);
+      return;
+    }
     ultimoMensaje = mensaje;
     if (mensaje.tipo === "imagen") {
       pintarImagen(mensaje.imagen);
@@ -1021,28 +1272,194 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     if (ultimoMensaje) encolar(ultimoMensaje);
   }
 
+  /**
+   * VÍDEO SUBIDO DESDE EL ORDENADOR. Se proyecta en la pizarra 3D para toda
+   * la clase y, además, el docente lo ve en su vista del tablero. El mismo
+   * <video> se captura con `captureStream()` y se retransmite por WebRTC para
+   * que los alumnos reciban el flujo y lo pinten en su propia pizarra.
+   */
   function mostrarVideo(urlVideo: string): void {
     if (!pantalla || !material) return;
     cambiarContenido();
+    olvidarMensajeDelTablero();
 
-    const videoTexture = new BABYLON.VideoTexture("videoTablero", urlVideo, scene, true, false);
-    videoTexture.vScale = 1;
-    videoTexture.uScale = 1;
-    material.diffuseTexture = videoTexture;
-    texturaVideo = videoTexture;
+    const video = document.createElement("video");
+    video.src = urlVideo;
+    video.loop = true;
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.muted = false;
+    videoElemento = video;
+    videoLocalSubido = true;
+
+    // Misma receta que la pantalla compartida: textura sin mipmaps y con el
+    // elemento como fuente (Babylon no toca play/pause/muted).
+    const textura = new BABYLON.VideoTexture(
+      "videoTablero",
+      video,
+      scene,
+      false,
+      false,
+      BABYLON.Texture.BILINEAR_SAMPLINGMODE,
+      { independentVideoSource: true }
+    );
+    textura.vScale = 1;
+    textura.uScale = 1;
+    material.diffuseTexture = textura;
+    texturaVideo = textura;
+    texturaEsRemota = false;
     pantalla.isVisible = true;
 
-    videoElemento = videoTexture.video;
-    videoElemento.loop = true;
     refrescarVolumen();
-    videoElemento.play().catch(() => console.warn("Autoplay bloqueado por el navegador."));
+    // Se cuelga YA de la vista del presentador: el profe lo ve ahí y la
+    // textura lo pinta a la vez en la pizarra (y captureStream lo manda).
+    refrescarVistaPresentador();
+
+    const publicarFlujo = (): void => {
+      // Si mientras cargaba se publicó otra cosa, este vídeo ya no manda.
+      if (!videoLocalSubido || videoElemento !== video) return;
+      const capturar = (video as HTMLVideoElement & {
+        captureStream?: () => MediaStream;
+      }).captureStream;
+      if (!capturar) {
+        console.warn("[tablero] Este navegador no puede retransmitir el vídeo (sin captureStream).");
+        return;
+      }
+      try {
+        const flujo = capturar.call(video);
+        if (flujo.getVideoTracks().length === 0) return;
+        opciones.alPublicarVideo?.(flujo);
+      } catch (error) {
+        console.warn("[tablero] No se pudo capturar el vídeo para la sala:", error);
+      }
+    };
+
+    video
+      .play()
+      .then(publicarFlujo)
+      .catch(() => {
+        console.warn("Autoplay bloqueado por el navegador.");
+        // Si el profe le da al play (Espacio), el flujo arranca entonces.
+        video.addEventListener("playing", publicarFlujo, { once: true });
+      });
+  }
+
+  /** Para y retira el vídeo subido, y avisa a la sala de que ya no hay flujo. */
+  function detenerVideoLocal(): void {
+    if (!videoLocalSubido) return;
+    videoLocalSubido = false;
+    const video = videoElemento;
+    videoElemento = null;
+    if (video) {
+      const url = video.src;
+      video.pause();
+      video.removeAttribute("src");
+      video.load();
+      video.remove();
+      if (url.startsWith("blob:")) URL.revokeObjectURL(url);
+    }
+    opciones.alPublicarVideo?.(null);
+  }
+
+  /**
+   * Vídeo EN DIRECTO que publicó otro de la sala: se proyecta en la pizarra
+   * 3D (igual que el vídeo local del docente), con sonido y SIN controles (el
+   * alumno solo mira; el mando es de quien está en el atril).
+   */
+  function mostrarVideoDeLaSala(flujo: MediaStream | null): void {
+    if (!flujo) {
+      quitarVideoSala();
+      return;
+    }
+
+    // El mismo flujo puede llegar dos veces (primero el vídeo y luego el
+    // audio): no se rehace la textura, que cortaría la reproducción.
+    if (flujo === flujoVideoRemoto) {
+      if (videoSala) {
+        if (videoSala.srcObject !== flujo) videoSala.srcObject = flujo;
+        void videoSala.play().catch(() => undefined);
+      }
+      refrescarVolumen();
+      return;
+    }
+
+    if (!pantalla || !material) return;
+    cambiarContenido();
+    olvidarMensajeDelTablero();
+    flujoVideoRemoto = flujo;
+    // Si había una pantalla en grande abierta, se cierra: el vídeo va a la
+    // pizarra 3D, que es lo que ve toda la clase.
+    if (cajaCompleta) cerrarPantallaCompleta();
+
+    const video = document.createElement("video");
+    video.autoplay = true;
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+    video.controls = false;
+    video.muted = false;
+    video.srcObject = flujo;
+    videoSala = video;
+
+    const textura = new BABYLON.VideoTexture(
+      "videoTableroRemoto",
+      video,
+      scene,
+      false,
+      false,
+      BABYLON.Texture.BILINEAR_SAMPLINGMODE,
+      { independentVideoSource: true }
+    );
+    textura.vScale = 1;
+    textura.uScale = 1;
+    material.diffuseTexture = textura;
+    texturaVideo = textura;
+    texturaEsRemota = true;
+    pantalla.isVisible = true;
+
+    refrescarVolumen();
+    void video.play().catch(() => {
+      console.warn("El navegador bloqueó el audio del vídeo en directo.");
+      // Un clic del alumno (el mismo que lo mete en la escena) lo arranca.
+      document.addEventListener(
+        "pointerdown",
+        () => void video.play().catch(() => undefined),
+        { once: true }
+      );
+    });
+  }
+
+  function quitarVideoSala(): void {
+    if (videoSala) {
+      // Si el alumno lo tenía abierto en grande, se cierra la caja antes de
+      // retirarlo para no dejar una pantalla vacía.
+      if (cajaCompleta && videoSala.parentElement?.classList.contains("tb-full-zona")) {
+        cerrarPantallaCompleta();
+      }
+      videoSala.pause();
+      videoSala.srcObject = null;
+      videoSala.remove();
+    }
+    videoSala = null;
+    flujoVideoRemoto = null;
+    // Solo se retira la textura si la que hay AHORA es la del vídeo remoto:
+    // si el emisor paró justo cuando llegó otro contenido, ese contenido manda.
+    if (texturaEsRemota && texturaVideo && material.diffuseTexture === texturaVideo) {
+      material.diffuseTexture.dispose();
+      material.diffuseTexture = null;
+      if (pantalla) pantalla.isVisible = false;
+    }
+    if (texturaEsRemota) {
+      texturaVideo = null;
+      texturaEsRemota = false;
+    }
   }
 
   /**
    * COMPARTIR PANTALLA.
    *
    * `getDisplayMedia` devuelve un MediaStream, que se enchufa a un <video> con
-   * `srcObject` (no hay URL) y de ahí a una VideoTexture, igual que un vídeo subido.
+   * `srcObject` (no hay URL) y de ahí a una VideoTexture.
    *
    * Dos detalles leídos del fuente de Babylon 9.21 antes de escribir esto:
    *   · el constructor acepta un HTMLVideoElement ya montado y NO le cambia el src;
@@ -1144,7 +1561,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
   // PANTALLA EN GRANDE (clic sobre la pizarra de lejos)
   // -------------------------------------------------------------------------
   function hayContenido(): boolean {
-    return Boolean(contenedorYoutube || imagenActual || videoElemento || hayNotas);
+    return Boolean(contenedorYoutube || imagenActual || videoElemento || videoSala || hayNotas);
   }
 
   function pantallaCompletaAbierta(): boolean {
@@ -1156,6 +1573,10 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     if (!caja) return;
     cajaCompleta = null;
     modoCompleto = false;
+    // El contenido se sacó de la cajita para ponerlo en grande: al volver hay
+    // que repintarla aunque sea "el mismo" (si no, `clavePanel` la daría por
+    // buena y la vista del presentador se quedaría vacía).
+    clavePanel = "";
 
     const zona = caja.querySelector<HTMLElement>(".tb-full-zona");
     if (zona) {
@@ -1172,6 +1593,12 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
         // Babylon sigue leyendo este <video> aunque ya no esté en el DOM
         // (así estaba antes de abrir la pantalla en grande).
         videoElemento.remove();
+      }
+      // El vídeo remoto sigue sonando y alimentando la textura aunque vuelva
+      // a estar fuera del DOM: solo se saca de la caja.
+      if (videoSala && videoSala.parentElement === zona) {
+        videoSala.classList.remove("tb-full-video");
+        videoSala.remove();
       }
       if (cajaNotas && cajaNotas.parentElement === zona) {
         document.body.appendChild(cajaNotas); // vuelve al panel de la derecha
@@ -1210,12 +1637,17 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
       imagen.src = imagenActual;
       zona.appendChild(imagen);
     } else if (videoElemento) {
-      // Se queda con la barra de progreso mientras está en grande (y se le
+      // Se queda con la barra de progreso mientras esté en grande (y se le
       // devuelve su estado anterior al cerrar).
       controlesPrevios = videoElemento.controls;
       videoElemento.classList.add("tb-full-video");
       videoElemento.controls = true;
       zona.appendChild(videoElemento);
+    } else if (videoSala) {
+      // Vídeo remoto: el alumno lo abre en grande igual que una diapositiva,
+      // pero sin controles (el mando sigue siendo de quien presenta).
+      videoSala.classList.add("tb-full-video");
+      zona.appendChild(videoSala);
     } else if (hayNotas && cajaNotas) {
       zona.appendChild(cajaNotas);
     }
@@ -1338,6 +1770,12 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     } else {
       cajaNotas.classList.remove("td-activo");
     }
+    // CINTURON Y TIRANTES: sin edicion el textarea es readOnly y no entra en el
+    // tabulador; asi ni el foco por teclado permite escribir al estudiante.
+    if (textoNotas) {
+      textoNotas.readOnly = !editable;
+      textoNotas.tabIndex = editable ? 0 : -1;
+    }
     hayNotas = true;
     return cajaNotas;
   }
@@ -1367,16 +1805,16 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
    * el panel de la clase de arriba a la izquierda ni con la webcam.
    */
   function rectEdicion(): { left: number; top: number; ancho: number; alto: number } {
-    const ancho = Math.round(Math.min(window.innerWidth * 0.34, 460));
-    // Por debajo de la caja de la webcam (top:16 + 200) para no tapar el
-    // principio del texto, pero sin pisar la barra del jugador de abajo.
-    const top = Math.round(
-      Math.max(window.innerHeight * 0.13, Math.min(240, window.innerHeight * 0.3))
-    );
+    // MISMO HUECO QUE LA CAJA DE YOUTUBE (arriba a la derecha): el alumno ve el
+    // video o las notas ahí, nunca proyectados en la pizarra 3D. No coexisten
+    // (publicar notas retira el video y al reves), asi que comparten sitio.
+    // Arriba a la izquierda quedan la webcam y la lista de la clase.
+    const ancho = Math.round(Math.min(window.innerWidth * 0.3, 380));
+    const top = 16;
     const alto = Math.round(
-      Math.min(window.innerHeight * 0.42, 380, window.innerHeight - top - 96)
+      Math.min(window.innerHeight * 0.4, 320, window.innerHeight - top - 130)
     );
-    return { left: window.innerWidth - ancho - 20, top, ancho, alto };
+    return { left: window.innerWidth - ancho - 16, top, ancho, alto };
   }
 
   /** Devuelve la barra de notas a su sitio de siempre (centrada arriba). */
@@ -1434,7 +1872,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
       // de arriba (allí choca con el panel de la clase).
       if (barraNotas && barraNotas.classList.contains("td-visible")) {
         barraNotas.style.left = "auto";
-        barraNotas.style.right = "20px";
+        barraNotas.style.right = "16px";
         barraNotas.style.top = `${edicion.top + edicion.alto + 10}px`;
         barraNotas.style.transform = "none";
       }
@@ -1501,6 +1939,10 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     // Lo escrito se queda en el papel: solo se deja de escribir.
     textoNotas?.blur();
     cajaNotas?.classList.remove("td-activo");
+    if (textoNotas) {
+      textoNotas.readOnly = true;
+      textoNotas.tabIndex = -1;
+    }
     barraNotas?.classList.remove("td-visible");
     // Papel vacío tras "Listo": no tiene sentido pintar un blanco en la pizarra.
     const vacias = !textoNotas?.value.trim();
@@ -1536,8 +1978,9 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     }
 
     modoNotas = true;
-    // Con la pizarra visible y sin textura el material sale en blanco: pizarra nueva.
-    if (pantalla) pantalla.isVisible = true;
+    // La pizarra 3D se queda APAGADA: las notas viven solo en el cuadrito de la
+    // derecha (proyectarlas en el tablero se glicheaba y las hacia ilegibles).
+    if (pantalla) pantalla.isVisible = false;
     // Primero la barra y luego la posición: así en el primer frame ya sale
     // debajo del papel (en el atril) en vez de un frame centrada arriba.
     asegurarBarraNotas().classList.add("td-visible");
@@ -1646,6 +2089,9 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
    */
   function refrescarVistaPresentador(): void {
     if (!panelActivo || !panelPresentador) return;
+    // Con la pantalla en grande el vídeo/iframe vive DENTRO de la caja: moverlo
+    // aquí lo sacaría de ella (y cortaría el vídeo subido).
+    if (modoCompleto) return;
 
     // NO DOS VISTAS A LA VEZ: mientras se ESCRIBE, el papel está como panel
     // de edición a la derecha (ya delante del que escribe) y la pantallita
@@ -1701,12 +2147,14 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
         zona.replaceChildren(pre);
       };
     } else if (videoElemento) {
-      clave = "video";
+      // VÍDEO SUBIDO DESDE EL ORDENADOR: el propio <video> (el mismo que se
+      // retransmite) se enseña aquí, en la vista del presentador.
+      const video = videoElemento;
+      // La clave lleva la URL: si se sube OTRO vídeo, hay que volver a pintar
+      // (si no, `clavePanel` seguiría diciendo "video-local" y no se movería).
+      clave = `video-local|${video.src}`;
       pintar = (zona) => {
-        const aviso = document.createElement("span");
-        aviso.className = "tb-mini-vacio";
-        aviso.textContent = "Vídeo o pantalla compartida en reproducción";
-        zona.replaceChildren(aviso);
+        if (zona.firstElementChild !== video) zona.replaceChildren(video);
       };
     } else {
       clave = "vacio";
@@ -1735,7 +2183,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     // en un panel lateral. Por eso ya NO se calcula la silueta de nadie para
     // recortar contenido HTML (era lo que dibujaba los "domos" verdes y traba la
     // página al acercarse alguien). Lo que va como TEXTURA en el tablero (PDF,
-    // imágenes, vídeo subido, pantalla compartida) lo tapa el motor 3D solo.
+    // imágenes, vídeo y pantalla compartida) lo tapa el motor 3D solo.
     actualizarPosicionYoutube();
     actualizarPosicionNotas();
     refrescarPantallaCompleta();
@@ -1882,10 +2330,13 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     barraNotas?.remove();
     cajaNotas?.remove();
     panelPresentador?.remove();
+    barraYoutube?.remove();
     barraNotas = null;
     cajaNotas = null;
     textoNotas = null;
     panelPresentador = null;
+    barraYoutube = null;
+    botonPausaYoutube = null;
     panelActivo = false;
     clavePanel = "";
     hayNotas = false;
@@ -1902,6 +2353,7 @@ export function crearTablero(opciones: OpcionesTablero): Tablero {
     menuAbierto,
     mostrarImagen,
     mostrarVideo,
+    mostrarVideoDeLaSala,
     publicarYoutube,
     compartirPantalla,
     cambiarDiapositiva,

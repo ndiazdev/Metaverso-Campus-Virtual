@@ -71,6 +71,7 @@ type MensajeTablero =
   | { tipo: "imagen"; imagen: string }
   | { tipo: "youtube"; url: string }
   | { tipo: "notas"; texto: string }
+  | { tipo: "youtube-mando"; accion: "play" | "pause" | "seek"; tiempo: number }
   | { tipo: "limpiar" };
 
 /** Una persona dentro de una sala. */
@@ -194,6 +195,14 @@ function sanearMensajeTablero(valor: unknown): MensajeTablero | null {
   if (m.tipo === "notas") {
     if (typeof m.texto !== "string" || m.texto.length > MAX_NOTAS_CARACTERES) return null;
     return { tipo: "notas", texto: m.texto };
+  }
+  if (m.tipo === "youtube-mando") {
+    const accion = m.accion;
+    const tiempo = m.tiempo;
+    if (accion !== "play" && accion !== "pause" && accion !== "seek") return null;
+    if (typeof tiempo !== "number" || !Number.isFinite(tiempo)) return null;
+    if (tiempo < 0 || tiempo > 12 * 60 * 60) return null;
+    return { tipo: "youtube-mando", accion, tiempo };
   }
   return null;
 }
@@ -575,6 +584,22 @@ export function adjuntarTiempoReal(servidorHttp: ServidorHttp): ServidorSocket {
     socket.on("video:oferta", reenviarSignaling("video:oferta"));
     socket.on("video:respuesta", reenviarSignaling("video:respuesta"));
     socket.on("video:candidate", reenviarSignaling("video:candidate"));
+
+    // VÍDEO DEL TABLERO: mismo esquema que la webcam, pero en un solo sentido
+    // (el docente emite y los alumnos reciben). Va en eventos aparte para no
+    // mezclarse con los pares de la cámara de cada participante.
+    socket.on("tablero-video:estado", (datos: unknown) => {
+      const codigo = socket.data.codigoSala as string | undefined;
+      if (!codigo) return;
+      const d = (datos ?? {}) as { activo?: unknown };
+      socket.to(nombreSala(codigo)).emit("tablero-video:estado", {
+        id: socket.id,
+        activo: d.activo === true,
+      });
+    });
+    socket.on("tablero-video:oferta", reenviarSignaling("tablero-video:oferta"));
+    socket.on("tablero-video:respuesta", reenviarSignaling("tablero-video:respuesta"));
+    socket.on("tablero-video:candidate", reenviarSignaling("tablero-video:candidate"));
 
     // Red lenta / pestaña cerrada / caída de red. Sin esto, los demás
     // verían avatares congelados en el sitio donde se les fue el wifi.

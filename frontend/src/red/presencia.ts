@@ -88,6 +88,10 @@ export type MensajeTablero =
   | { tipo: "imagen"; imagen: string }
   | { tipo: "youtube"; url: string }
   | { tipo: "notas"; texto: string }
+  // Mando del profesor sobre el vídeo de YouTube que está en la sala: pausar,
+  // reanudar o saltar a un segundo concreto (`tiempo`, absoluto). No se guarda
+  // como contenido: es una orden puntual, no lo que hay pintado.
+  | { tipo: "youtube-mando"; accion: "play" | "pause" | "seek"; tiempo: number }
   | { tipo: "limpiar" };
 
 /**
@@ -120,6 +124,15 @@ function esMensajeTablero(valor: unknown): valor is MensajeTablero {
   if (m.tipo === "youtube") return typeof m.url === "string" && m.url.length <= 500;
   if (m.tipo === "notas") {
     return typeof m.texto === "string" && m.texto.length <= MAX_NOTAS_CARACTERES;
+  }
+  if (m.tipo === "youtube-mando") {
+    return (
+      (m.accion === "play" || m.accion === "pause" || m.accion === "seek") &&
+      typeof m.tiempo === "number" &&
+      Number.isFinite(m.tiempo) &&
+      m.tiempo >= 0 &&
+      m.tiempo <= 12 * 60 * 60
+    );
   }
   return false;
 }
