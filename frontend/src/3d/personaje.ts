@@ -206,7 +206,8 @@ export async function cargarPersonaje(
   let resultado: BABYLON.ISceneLoaderAsyncResult | null = null;
   for (const archivo of skin.archivos) {
     try {
-      const r = await BABYLON.SceneLoader.ImportMeshAsync("", "/models/", archivo, scene);
+      const baseModelos = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+      const r = await BABYLON.SceneLoader.ImportMeshAsync("", `${baseModelos}/models/`, archivo, scene);
       if (tieneCuerpo(r)) {
         resultado = r;
         break;

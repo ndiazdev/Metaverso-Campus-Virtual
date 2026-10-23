@@ -20,24 +20,16 @@ import { LOGO_URL, LOGO_OSCURO_URL } from "../dashboard/dashboardEstilos";
 // Fotos reales del carrusel: login1.jpeg, login2.jpeg, login3.jpeg
 // La carpeta viene de Vite (import.meta.env.BASE_URL) para que funcione
 // también cuando el sitio se publica en un subdirectorio.
-const BASE_IMAGENES = `${import.meta.env.BASE_URL}images/`;
+const BASE_IMG = `${import.meta.env.BASE_URL}images/`;
+
+function imgLogin(nombre: string): string {
+  return BASE_IMG + nombre;
+}
 
 const IMAGENES_LOGIN: string[][] = [
-  [
-    BASE_IMAGENES + "login1.jpeg",
-    BASE_IMAGENES + "login1.jpg",
-    BASE_IMAGENES + "login1.png",
-  ],
-  [
-    BASE_IMAGENES + "login2.jpeg",
-    BASE_IMAGENES + "login2.jpg",
-    BASE_IMAGENES + "login2.png",
-  ],
-  [
-    BASE_IMAGENES + "login3.jpeg",
-    BASE_IMAGENES + "login3.jpg",
-    BASE_IMAGENES + "login3.png",
-  ],
+  [imgLogin("login1.jpeg"), imgLogin("login1.jpg"), imgLogin("login1.png")],
+  [imgLogin("login2.jpeg"), imgLogin("login2.jpg"), imgLogin("login2.png")],
+  [imgLogin("login3.jpeg"), imgLogin("login3.jpg"), imgLogin("login3.png")],
 ];
 
 const PANEL_IMAGEN = `
@@ -65,10 +57,6 @@ function marcaSitio(): string {
 `;
 }
 
-// Fondo de la página de login. Sale de Vite (BASE_URL) para que funcione
-// igual en la raíz que publicado en /metaverso-santototunja/.
-const FONDO_LOGIN = `${import.meta.env.BASE_URL}images/fondologin.jpeg`;
-
 const ESTILOS = `
   /* ---------------- FONDO DE PÁGINA (la parte de atrás) ----------------
      Estilo GLASS y SIN TONO AZUL: el velo es gris neutro puro, así que la
@@ -83,7 +71,7 @@ const ESTILOS = `
       radial-gradient(circle at 14% 18%, rgba(255,255,255,0.06), transparent 48%),
       radial-gradient(circle at 86% 84%, rgba(255,255,255,0.05), transparent 52%),
       linear-gradient(rgba(12,13,16,0.88), rgba(12,13,16,0.88)),
-      url("${FONDO_LOGIN}");
+      url("${BASE_IMG}fondologin.jpeg");
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;

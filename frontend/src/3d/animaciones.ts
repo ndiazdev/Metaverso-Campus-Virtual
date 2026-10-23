@@ -63,7 +63,7 @@ const EXTERNAS: ReadonlyArray<readonly [SlotAnimacion, string]> = [
   ["manoParado", "alzarmanoparado.glb"],
   ["manoSentado", "alzarmanosentado.glb"],
 ];
-const CARPETA_ANIMACIONES = "/models/animacion/";
+const CARPETA_ANIMACIONES = `${(import.meta.env.BASE_URL || "/").replace(/\/$/, "")}/models/animacion/`;
 
 // ---------------------------------------------------------------
 // Utilidades de muestreo (las mismas que validaron la clasificación)

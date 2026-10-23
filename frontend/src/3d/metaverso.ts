@@ -942,9 +942,10 @@ function medirInteriorDelSalon(
 
   async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> {
     // Usar siempre salon.glb como mapa principal
+    const baseModelos = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
     const resultado = await BABYLON.SceneLoader.ImportMeshAsync(
       "",
-      "/models/mapes/",
+      `${baseModelos}/models/mapes/`,
       "salon.glb",
       scene
     );

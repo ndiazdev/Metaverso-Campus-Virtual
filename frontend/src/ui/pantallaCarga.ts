@@ -104,6 +104,8 @@ export function mostrarPantallaCarga(): void {
 
   capa = document.createElement("div");
   capa.className = "pc-capa";
+  const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+  capa.style.backgroundImage = `linear-gradient(180deg,rgba(8,20,44,.88),rgba(4,10,26,.96)), url("${base}/images/fondo_carga.jpeg")`;
   capa.setAttribute("role", "status");
   capa.setAttribute("aria-live", "polite");
   capa.innerHTML = `
