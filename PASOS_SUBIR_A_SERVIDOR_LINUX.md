@@ -228,6 +228,7 @@ curl -I https://TU_DOMINIO.com
 ```
 
 Pruebas funcionales:
+- [ ] Entrar con `admin@usantoto.edu.co` / `Admin2026*` y cambiar la contraseña
 - [ ] Abrir en dos navegadores/incógnito con dos usuarios en misma clase
 - [ ] Avatares se ven correctamente
 - [ ] Sincronización de diapositivas (PDF) entre usuarios
@@ -264,6 +265,7 @@ mysqldump -u campus -p usta_metaverso | gzip > /respaldos/usta_metaverso-$(date 
 
 ## Notas importantes
 - `.env` **nunca** va a git (solo `.env.example`)
+- Al arrancar, el backend crea `admin@usantoto.edu.co` / `Admin2026*` (rol admin) si no existe; cámbiala al primer ingreso. A mano: `npm run seed:admin --prefix backend`
 - Backend corre con `tsx` en producción (tal como está)
 - WebRTC va peer-to-peer; señalización por Socket.IO a través de nginx
 - Si hay problemas con permisos/SELinux, revisar etiquetas en `/var/www/campus`

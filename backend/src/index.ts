@@ -13,6 +13,7 @@
 import { app } from "./app";
 import { ENTORNO } from "./entorno";
 import { adjuntarTiempoReal } from "./tiempoReal";
+import { asegurarAdmin } from "./seedAdmin";
 
 // app.listen() devuelve el servidor http que hay detrás de Express:
 // ese mismo servidor es el que atiende los WebSockets, así que el
@@ -26,3 +27,6 @@ const servidor = app.listen(ENTORNO.PUERTO, () => {
 });
 
 adjuntarTiempoReal(servidor);
+
+// Si la base ya está importada, deja creado el admin por defecto.
+void asegurarAdmin();

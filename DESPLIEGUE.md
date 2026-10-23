@@ -326,6 +326,8 @@ Prueba manual (la de verdad):
 6. Que los dos puedan encender **cámara y micrófono** y compartir
    **pantalla**, y que el otro los vea/escuche en directo (va por WebRTC,
    no pasa por el servidor).
+7. Entrar con el admin por defecto (`admin@usantoto.edu.co` / `Admin2026*`)
+   y cambiar la contraseña desde el perfil.
 
 Logs útiles si algo falla:
 
@@ -361,6 +363,10 @@ mysqldump -u campus -p usta_metaverso | gzip > /respaldos/usta_metaverso-$(date 
 
 - **`.env` jamás se sube a git** (está en `.gitignore`; solo se versiona
   `.env.example`).
+- **Admin por defecto**: al arrancar, el backend crea
+  `admin@usantoto.edu.co` con la contraseña `Admin2026*` (rol admin) si no
+  existe. Si ya existe no se sobrescribe; cámbiala al primer ingreso. También
+  se puede ejecutar a mano con `npm run seed:admin --prefix backend`.
 - **Los sockets aún no autentican**: el backend confía en el `correo` que llega
   en el mensaje `sala:entrar` (no hay JWT). Mientras eso siga así, el servidor
   DEBE ir detrás de HTTPS y `CORS_ORIGENES` debe ser la URL real.
