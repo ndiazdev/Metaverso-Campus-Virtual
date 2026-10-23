@@ -18,10 +18,11 @@
 import { obtenerToken } from "../state/estado";
 
 const PERSONALIZADA = import.meta.env.VITE_API_URL as string | undefined;
+const BASE = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
 
 export const API_URL: string =
   (PERSONALIZADA ? PERSONALIZADA.replace(/\/+$/, "") : "") ||
-  (import.meta.env.DEV ? "http://localhost:3000/api" : "/api");
+  (import.meta.env.DEV ? "http://localhost:3000/api" : `${BASE}/api`);
 
 // ======================================================
 // CABECERA DE AUTENTICACIÓN
