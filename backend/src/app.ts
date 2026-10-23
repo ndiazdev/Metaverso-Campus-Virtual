@@ -46,6 +46,15 @@ const CARPETA_DIST =
   process.env.FRONT_DIST || path.resolve(__dirname, "..", "..", "frontend", "dist");
 const INDICE = path.join(CARPETA_DIST, "index.html");
 
+// Imágenes del frontend (frontend/public/images). Se sirven también desde el
+// código fuente para que el servidor las reconozca aunque frontend/dist no
+// esté compilado o se haya copiado sin la carpeta images.
+const CARPETA_IMAGENES = path.resolve(__dirname, "..", "..", "frontend", "public", "images");
+
+if (fs.existsSync(CARPETA_IMAGENES)) {
+  app.use("/images", express.static(CARPETA_IMAGENES));
+}
+
 if (fs.existsSync(INDICE)) {
   app.use(express.static(CARPETA_DIST));
 
