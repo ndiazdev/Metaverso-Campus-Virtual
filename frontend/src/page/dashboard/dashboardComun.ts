@@ -28,23 +28,23 @@ export function etiquetaRol(rol: Rol): string {
  */
 export const IMAGENES_ROL: Record<Rol, { femenino: string; masculino: string }> = {
   admin: {
-    femenino: "/images/adminFimg.png",
-    masculino: "/images/adminMimg.png",
+    femenino: `${import.meta.env.BASE_URL}images/adminFimg.png`,
+    masculino: `${import.meta.env.BASE_URL}images/adminMimg.png`,
   },
 
   docente: {
-    femenino: "/images/profeFimg.png",
-    masculino: "/images/profeMimg.png",
+    femenino: `${import.meta.env.BASE_URL}images/profeFimg.png`,
+    masculino: `${import.meta.env.BASE_URL}images/profeMimg.png`,
   },
 
   estudiante: {
-    femenino: "/images/estuFimg.png",
-    masculino: "/images/estuMimg.png",
+    femenino: `${import.meta.env.BASE_URL}images/estuFimg.png`,
+    masculino: `${import.meta.env.BASE_URL}images/estuMimg.png`,
   },
 
   invitado: {
-    femenino: "/images/estuFimg.png",
-    masculino: "/images/estuMimg.png",
+    femenino: `${import.meta.env.BASE_URL}images/estuFimg.png`,
+    masculino: `${import.meta.env.BASE_URL}images/estuMimg.png`,
   },
 };
 

@@ -13,9 +13,11 @@ const DURACION_MIN_MS = 4600;
 // Failsafe: si la carga se atasca, el usuario nunca se queda atrapado.
 const TOPE_ESPERA_MS = 20000;
 
+const FONDO_CARGA = `${import.meta.env.BASE_URL}images/fondo_carga.jpeg`;
+
 const ESTILO = `
 .pc-capa{position:fixed;inset:0;z-index:5900;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:20px;font-family:sans-serif;color:#e2e8f0;pointer-events:auto;transition:opacity .4s ease;
-  background:linear-gradient(180deg,rgba(8,20,44,.88),rgba(4,10,26,.96)),url(`${import.meta.env.BASE_URL}images/fondo_carga.jpeg`) center/cover no-repeat #04070f}
+  background:linear-gradient(180deg,rgba(8,20,44,.88),rgba(4,10,26,.96)),url("${FONDO_CARGA}") center/cover no-repeat #04070f}
 .pc-capa.pc-fuera{opacity:0;pointer-events:none}
 .pc-titulo{margin:0;font-size:clamp(28px,4.4vw,46px);font-weight:800;letter-spacing:.34em;text-indent:.34em;color:#F2A93B;text-shadow:0 0 22px rgba(242,169,59,.45)}
 .pc-barra{position:relative;width:min(66vw,640px);height:18px;border-radius:999px;overflow:hidden;background:rgba(255,255,255,.08);border:1px solid rgba(242,169,59,.4);box-shadow:inset 0 0 24px rgba(0,0,0,.5)}

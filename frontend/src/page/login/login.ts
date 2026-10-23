@@ -17,11 +17,27 @@ import { LOGO_URL, LOGO_OSCURO_URL } from "../dashboard/dashboardEstilos";
 // Es un CARRUSEL: cada entrada es la lista de nombres que se prueban en orden
 // (por si la imagen está en .jpeg, .jpg o .png). Si ningún nombre carga, la
 // diapositiva se descarta sola y el carrusel sigue con las que sí existan.
-// Fotos reales del carrusel: login.jpeg, login1.jpeg, login2.jpeg, login3.jpeg
+// Fotos reales del carrusel: login1.jpeg, login2.jpeg, login3.jpeg
+// La carpeta viene de Vite (import.meta.env.BASE_URL) para que funcione
+// también cuando el sitio se publica en un subdirectorio.
+const BASE_IMAGENES = `${import.meta.env.BASE_URL}images/`;
+
 const IMAGENES_LOGIN: string[][] = [
-  ["/images/login1.jpeg", "/images/login1.jpg", "/images/login1.png"],
-  ["/images/login2.jpeg", "/images/login2.jpg", "/images/login2.png"],
-  ["/images/login3.jpeg", "/images/login3.jpg", "/images/login3.png"],
+  [
+    BASE_IMAGENES + "login1.jpeg",
+    BASE_IMAGENES + "login1.jpg",
+    BASE_IMAGENES + "login1.png",
+  ],
+  [
+    BASE_IMAGENES + "login2.jpeg",
+    BASE_IMAGENES + "login2.jpg",
+    BASE_IMAGENES + "login2.png",
+  ],
+  [
+    BASE_IMAGENES + "login3.jpeg",
+    BASE_IMAGENES + "login3.jpg",
+    BASE_IMAGENES + "login3.png",
+  ],
 ];
 
 const PANEL_IMAGEN = `
@@ -49,6 +65,10 @@ function marcaSitio(): string {
 `;
 }
 
+// Fondo de la página de login. Sale de Vite (BASE_URL) para que funcione
+// igual en la raíz que publicado en /metaverso-santototunja/.
+const FONDO_LOGIN = `${import.meta.env.BASE_URL}images/fondologin.jpeg`;
+
 const ESTILOS = `
   /* ---------------- FONDO DE PÁGINA (la parte de atrás) ----------------
      Estilo GLASS y SIN TONO AZUL: el velo es gris neutro puro, así que la
@@ -63,7 +83,7 @@ const ESTILOS = `
       radial-gradient(circle at 14% 18%, rgba(255,255,255,0.06), transparent 48%),
       radial-gradient(circle at 86% 84%, rgba(255,255,255,0.05), transparent 52%),
       linear-gradient(rgba(12,13,16,0.88), rgba(12,13,16,0.88)),
-      url(`${import.meta.env.BASE_URL}images/fondologin.jpeg`);
+      url("${FONDO_LOGIN}");
     background-size: cover;
     background-position: center;
     background-repeat: no-repeat;
