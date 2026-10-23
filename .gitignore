@@ -28,3 +28,6 @@ dist-ssr
 .env
 .env.*
 !.env.example
+
+# Volcado de la base de datos con datos reales: no se sube a git.
+/usta_metaverso.sql
