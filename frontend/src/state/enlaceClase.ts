@@ -75,9 +75,18 @@ export function escribirClaseEnLaUrl(codigo: string | null): void {
  */
 export function escribirPantallaEnLaUrl(ruta: string): void {
   try {
+    const base = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
     const url = new URL(window.location.href);
-    if (url.pathname !== ruta) {
-      url.pathname = ruta;
+    let nuevaRuta = ruta.startsWith("/") ? ruta : `/${ruta}`;
+
+    if (base && base !== "/") {
+      nuevaRuta = `${base}${nuevaRuta}`;
+    } else if (base === "/") {
+      // Si está en raíz, se deja tal cual
+    }
+
+    if (url.pathname !== nuevaRuta) {
+      url.pathname = nuevaRuta;
       window.history.replaceState(null, "", url);
     }
   } catch {
