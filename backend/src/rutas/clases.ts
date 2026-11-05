@@ -16,6 +16,14 @@ import { ENTORNO } from "../entorno";
 
 export const rutasClases = Router();
 
+const TIPOS_SALON = ["normal", "reunion", "griego"] as const;
+type TipoSalon = (typeof TIPOS_SALON)[number];
+const TIPO_SALON_POR_DEFECTO: TipoSalon = "normal";
+
+function esTipoSalon(valor: unknown): valor is TipoSalon {
+  return TIPOS_SALON.includes(valor as TipoSalon);
+}
+
 function verificarAutenticacion(req: any, res: any, next: any) {
   const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
   if (!token) {
@@ -58,6 +66,7 @@ rutasClases.get("/", async (req, res) => {
           c.materia,
           c.correo_docente AS correoDocente,
           c.nombre_docente AS nombreDocente,
+          c.tipo_salon AS tipoSalon,
 
           (
             SELECT COUNT(*)
@@ -90,13 +99,21 @@ rutasClases.get("/", async (req, res) => {
 // ------------------------------------------------------
 
 rutasClases.post("/", verificarAutenticacion, soloAdminODocente, async (req, res) => {
-  const { codigo, materia, correoDocente, nombreDocente } = req.body;
+  const { codigo, materia, correoDocente, nombreDocente, tipoSalon } = req.body;
 
   if (!correoDocente || !nombreDocente) {
     return res.status(400).json({
       error: "Faltan datos del docente",
     });
   }
+
+  if (tipoSalon !== undefined && !esTipoSalon(tipoSalon)) {
+    return res.status(400).json({
+      error: `El tipo de salón debe ser uno de: ${TIPOS_SALON.join(", ")}.`,
+    });
+  }
+
+  const tipoSalonFinal = tipoSalon ?? TIPO_SALON_POR_DEFECTO;
 
   try {
     await db.query(
@@ -106,11 +123,12 @@ rutasClases.post("/", verificarAutenticacion, soloAdminODocente, async (req, res
           codigo,
           materia,
           correo_docente,
-          nombre_docente
+          nombre_docente,
+          tipo_salon
         )
-        VALUES (?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?)
       `,
-      [codigo, materia, correoDocente, nombreDocente]
+      [codigo, materia, correoDocente, nombreDocente, tipoSalonFinal]
     );
 
     console.log("✅ Clase creada:", codigo, materia);
@@ -120,6 +138,7 @@ rutasClases.post("/", verificarAutenticacion, soloAdminODocente, async (req, res
       materia,
       correoDocente,
       nombreDocente,
+      tipoSalon: tipoSalonFinal,
     });
   } catch (error) {
     console.error("❌ Error al crear clase en MySQL:", error);
@@ -175,6 +194,17 @@ rutasClases.put("/:codigo", verificarAutenticacion, soloAdmin, async (req, res) 
 
     cambios.push("correo_docente = ?", "nombre_docente = ?");
     valores.push(correo, nombre);
+  }
+
+  if (cuerpo.tipoSalon !== undefined) {
+    if (!esTipoSalon(cuerpo.tipoSalon)) {
+      return res.status(400).json({
+        error: `El tipo de salón debe ser uno de: ${TIPOS_SALON.join(", ")}.`,
+      });
+    }
+
+    cambios.push("tipo_salon = ?");
+    valores.push(cuerpo.tipoSalon);
   }
 
   if (cambios.length === 0) {
@@ -255,6 +285,7 @@ rutasClases.get("/:codigo", async (req, res) => {
           c.materia,
           c.correo_docente AS correoDocente,
           c.nombre_docente AS nombreDocente,
+          c.tipo_salon AS tipoSalon,
           DATE_FORMAT(c.fecha_creacion, '%Y-%m-%d %H:%i') AS fechaCreacion,
 
           (
@@ -300,6 +331,7 @@ rutasClases.get("/docente/:correo", async (req, res) => {
             c.id,
             c.codigo,
             c.materia,
+            c.tipo_salon AS tipoSalon,
             c.fecha_creacion AS fechaCreacion,
 
             (
@@ -336,6 +368,7 @@ rutasClases.get("/estudiante/:correo", async (req, res) => {
           c.id,
           c.codigo,
           c.materia,
+          c.tipo_salon AS tipoSalon,
           c.fecha_creacion AS fechaCreacion,
           c.nombre_docente AS nombreDocente
 

@@ -7,6 +7,12 @@ import {
 import { montarFiltros, montarFiltrosClases, montarTabla } from "./dashboardFiltros";
 import { API_URL } from "../../api/cliente";
 import { t } from "../../state/idioma";
+import { type TipoSalon } from "../../state/salones";
+import {
+  conectarSelectorSalon,
+  htmlSelectorSalon,
+  leerTipoSalonSeleccionado,
+} from "./selectorSalon";
 
 export interface DashboardAdminOpciones {
   cuenta: Cuenta & { id?: number };
@@ -27,6 +33,7 @@ interface ClaseAdmin {
   correoDocente: string;
   nombreDocente: string;
   totalInscritos: number;
+  tipoSalon?: TipoSalon;
 }
 
 interface InscripcionAdmin {
@@ -270,7 +277,7 @@ export async function mostrarDashboardAdmin(
 
     modal.innerHTML = `
       <div
-        class="dash-modal"
+        class="dash-modal dash-modal-clase"
         role="dialog"
         aria-modal="true"
         aria-labelledby="tituloModalClase"
@@ -303,6 +310,8 @@ export async function mostrarDashboardAdmin(
           id="campoMateriaNueva"
           placeholder="${t("admin.placeholderMateria")}"
         />
+
+        ${htmlSelectorSalon("normal")}
 
         <p
           class="dash-error"
@@ -375,10 +384,14 @@ export async function mostrarDashboardAdmin(
         "#botonConfirmarClase",
       )!;
 
+    conectarSelectorSalon(modal);
+
     botonConfirmar.addEventListener(
       "click",
       async () => {
         const materia = campoMateria.value.trim();
+
+        const tipoSalon = leerTipoSalonSeleccionado(modal);
 
         if (!materia) {
           errorModal.textContent =
@@ -415,6 +428,7 @@ export async function mostrarDashboardAdmin(
                 correoDocente: cuenta.correo,
                 nombreDocente:
                   cuenta.nombreCompleto,
+                tipoSalon,
               }),
             },
           );
@@ -516,6 +530,7 @@ export async function mostrarDashboardAdmin(
                   fechaCreacion:
                     new Date().toISOString(),
                   estudiantesInscritos: [],
+                  tipoSalon,
                 };
 
                 alEntrarAClase(nuevaClase);
@@ -1816,7 +1831,7 @@ export async function mostrarUsuariosAdmin(
 
     modal.innerHTML = `
       <div
-        class="dash-modal"
+        class="dash-modal dash-modal-clase"
         role="dialog"
         aria-modal="true"
         aria-labelledby="tituloModalClaseAdmin"
@@ -1869,6 +1884,8 @@ export async function mostrarUsuariosAdmin(
           ${opcionesDocente(esEdicion ? clase.correoDocente : candidatosDocente[0]?.correo ?? "")}
         </select>
 
+        ${htmlSelectorSalon(esEdicion ? clase.tipoSalon : "normal")}
+
         <p
           class="dash-error"
           id="errorModalClaseAdmin"
@@ -1920,10 +1937,13 @@ export async function mostrarUsuariosAdmin(
     const botonConfirmar =
       modal.querySelector<HTMLButtonElement>("#botonConfirmarClaseAdmin")!;
 
+    conectarSelectorSalon(modal);
+
     botonConfirmar.addEventListener("click", async () => {
       const materia = campoMateria.value.trim();
       const codigo = campoCodigo.value.trim().toUpperCase();
       const correoDocente = campoDocente.value;
+      const tipoSalon = leerTipoSalonSeleccionado(modal);
 
       errorModal.textContent = "";
 
@@ -1966,6 +1986,7 @@ export async function mostrarUsuariosAdmin(
               materia,
               correoDocente: docente.correo,
               nombreDocente: docente.nombreCompleto,
+              tipoSalon,
             }),
           },
         );

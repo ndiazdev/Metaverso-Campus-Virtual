@@ -1,21 +1,8 @@
 
 
+import type { TipoSalon } from "./salones";
+
 export type Rol = "estudiante" | "docente" | "admin" | "invitado";
-
-const DOMINIO_INSTITUCIONAL = "@usantoto.edu.co";
-
-
-export function detectarRolPorCorreo(correo: string): Rol {
-  const correoNormalizado = correo.trim().toLowerCase();
-  if (!correoNormalizado.endsWith(DOMINIO_INSTITUCIONAL)) {
-    return "invitado";
-  }
-  const parteLocal = correoNormalizado.split("@")[0];
-  const prefijosDocente = ["profe.", "profesor.", "docente."];
-  if (prefijosDocente.some((prefijo) => parteLocal.startsWith(prefijo))) return "docente";
-  if (parteLocal.startsWith("admin.")) return "admin";
-  return "estudiante";
-}
 
 export interface Cuenta {
   nombreCompleto: string;
@@ -34,6 +21,7 @@ export interface Clase {
   nombreDocente: string;
   fechaCreacion: string;
   estudiantesInscritos: string[]; // correos
+  tipoSalon?: TipoSalon;
 }
 
 const CLAVE_CUENTAS = "usta_metaverso_cuentas";

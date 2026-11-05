@@ -10,6 +10,7 @@ import { iniciarLogin } from "../page/login/login";
 import { mostrarDashboard } from "../page/dashboard/dashboard";
 import { obtenerSesion } from "../state/estado";
 import type { Clase } from "../state/estado";
+import { archivoSalon, normalizarTipoSalon, type TipoSalon } from "../state/salones";
 import { ALTURA_OBJETIVO_BASE, cargarPersonaje, fijarAlturaPersonaje, type Personaje } from "./personaje";
 import { crearAvataresRemotos, type AvataresRemotos } from "./avataresRemotos";
 import { crearListadoConectados, type ListadoConectados } from "../ui/listadoConectados";
@@ -59,7 +60,7 @@ const engine = new BABYLON.Engine(canvas, true);
 const ESCALA_SALON = 0.85;
 
 // PRUEBA DE TEXTURAS (07/10) â€” mapa de pruebas POR CLASE: solo las clases de
-// esta lista cargan "mapes/salon.glb" (el .glb que saliÃ³ de Blender con los
+// esta lista cargan "mapes/salon_normal.glb" (el .glb que saliÃ³ de Blender con los
 // colores/texturas, pero EN METROS â€”paredes 3.4 m, techo 5.2 mâ€” y todavÃ­a SIN
 // los nodos lÃ³gicos del prototipo: room, desk, desk_chair, sit_*, tablero_01,
 // TEACH_01), asÃ­ que allÃ­ solo se mira si los colores salieron bien: sin nodos
@@ -583,6 +584,7 @@ const UMBRAL_TECHO = 9.75 * ESCALA_SALON; // red de seguridad por geometrÃ­a (
 
 /** Altura final de un punto: intacta bajo la puerta, estirada encima de ella. */
 function mapearAltura(y: number): number {
+  if (tipoSalonActiva !== "normal") return y;
   if (y <= TOPE_PUERTA) return y;
   return TOPE_PUERTA + (y - TOPE_PUERTA) * FACTOR_TECHO;
 }
@@ -601,6 +603,12 @@ const PATRON_SUBIDA: RegExp[] = [
 ];
 
 function subirElTechoDeLaSala(escena: BABYLON.Scene): void {
+  if (tipoSalonActiva !== "normal") {
+    console.log(
+      `Salón "${tipoSalonActiva}": se conserva su arquitectura original (sin ajuste de techo).`
+    );
+    return;
+  }
   if (SUBIR_TECHO <= 0) return;
 
   const escaladas = new Set<BABYLON.AbstractMesh>();
@@ -798,6 +806,158 @@ function esMallaEstructura(m: BABYLON.AbstractMesh): boolean {
   return !!m.getVerticesData(BABYLON.VertexBuffer.PositionKind);
 }
 
+// salon_griego.glb (griego): el recinto son SOLO las dos mallas de muro y los ocho
+// pilares. El resto de mallas del mapa (roof, volume, water...) no debe frenar
+// al personaje. Se aceptan "pillar" (nombre actual del .glb) y "pilar" (nombre
+// en espanol que se usa al preparar el modelo).
+const NOMBRES_COLISION_GRIEGO = /^(wall|pillar|pilar)(\.\d+)?$/i;
+
+function esColisionDeEstructura(m: BABYLON.AbstractMesh): boolean {
+  if (!esMallaEstructura(m)) return false;
+  if (tipoSalonActiva === "griego") {
+    return NOMBRES_COLISION_GRIEGO.test(m.name.trim());
+  }
+  return true;
+}
+
+// El piso se llama "floor" en los tres modelos nuevos; "Cube.021" se mantiene
+// como alias por compatibilidad con exportaciones antiguas. El material solo se
+// usa como último recurso: en salon_normal.glb hay otra malla (Cube.012) con el
+// mismo material que NO es el piso, y elegirla dejaba al personaje flotando.
+function esMallaPisoPorNombre(m: BABYLON.AbstractMesh): boolean {
+  const nombre = m.name.trim().toLowerCase();
+  return nombre === "floor" || nombre === "cube.021";
+}
+
+function esMallaPisoPorMaterial(m: BABYLON.AbstractMesh): boolean {
+  const material = m.material?.name?.toLowerCase() ?? "";
+  return (
+    material.includes("floor") ||
+    material.includes("parquet") ||
+    material.includes("beech wood") ||
+    material.includes("piso")
+  );
+}
+
+function buscarMallaPiso(
+  mallas: BABYLON.AbstractMesh[]
+): BABYLON.AbstractMesh | null {
+  const porNombre = mallas.find(esMallaPisoPorNombre);
+  if (porNombre) return porNombre;
+
+  // Si el export no trae el nombre esperado, se queda con la malla de material
+  // de piso con mayor huella XZ (el piso, no una pared o ventana con ese material).
+  let mejor: BABYLON.AbstractMesh | null = null;
+  let mejorArea = 0;
+  for (const malla of mallas) {
+    if (!esMallaPisoPorMaterial(malla)) continue;
+    if (!malla.getVerticesData(BABYLON.VertexBuffer.PositionKind)) continue;
+    malla.computeWorldMatrix(true);
+    malla.refreshBoundingInfo(false, false);
+    const bb = malla.getBoundingInfo().boundingBox;
+    const area =
+      (bb.maximumWorld.x - bb.minimumWorld.x) *
+      (bb.maximumWorld.z - bb.minimumWorld.z);
+    if (area > mejorArea) {
+      mejorArea = area;
+      mejor = malla;
+    }
+  }
+  return mejor;
+}
+
+function esMallaAguaNueva(m: BABYLON.AbstractMesh): boolean {
+  const nombre = m.name.trim().toLowerCase();
+  return nombre === "agua" || nombre.startsWith("agua.");
+}
+
+// El salón griego trae un cubo gris ("volume") que estorba en la vista y, en
+// exportaciones antiguas, un plano de agua animada. Se ocultan esas mallas,
+// pero la malla nueva "agua" (textura Agua.png) se conserva.
+function quitarExtrasDelSalonGriego(mallas: BABYLON.AbstractMesh[]): void {
+  if (tipoSalonActiva !== "griego") return;
+
+  const aguaAnimadaAntigua = mallas.filter((m) => {
+    const nombre = m.name.trim().toLowerCase();
+    // La malla nueva se llama "agua" (o "agua.001"...): no se toca.
+    if (esMallaAguaNueva(m)) return false;
+
+    const material = m.material?.name?.trim().toLowerCase() ?? "";
+    return (
+      /aniamted|animated|interactive/.test(nombre) ||
+      /water/.test(nombre) ||
+      /water/.test(material)
+    );
+  });
+  const cuboGris = mallas.filter((m) => {
+    const nombre = m.name.trim().toLowerCase();
+    const material = m.material?.name?.trim().toLowerCase() ?? "";
+    return nombre === "volume" || material === "volume";
+  });
+
+  for (const malla of [...aguaAnimadaAntigua, ...cuboGris]) {
+    malla.setEnabled(false);
+    malla.isVisible = false;
+  }
+
+  if (aguaAnimadaAntigua.length) {
+    console.log(
+      `Agua animada antigua del salón griego quitada (${aguaAnimadaAntigua.length} malla(s)).`
+    );
+  }
+  if (cuboGris.length) {
+    console.log(`Cubo gris del salón griego quitado (${cuboGris.length} malla(s)).`);
+  }
+}
+
+// Tinta el agua nueva para que no se vea tan celeste. El PBR del glb trae
+// albedo blanco y alpha 0.6: al multiplicar por un tono más oscuro y subir un
+// poco la opacidad, el estanque gana profundidad sin perder la textura Agua.png.
+function oscurecerAguaDelSalonGriego(mallas: BABYLON.AbstractMesh[]): void {
+  if (tipoSalonActiva !== "griego") return;
+
+  const agua = mallas.find(esMallaAguaNueva);
+  if (!agua?.material) return;
+
+  const tinte = new BABYLON.Color3(0.16, 0.36, 0.48);
+  if (agua.material instanceof BABYLON.PBRMaterial) {
+    agua.material.albedoColor = tinte;
+    agua.material.alpha = Math.max(agua.material.alpha, 0.82);
+    console.log("Agua del salón griego oscurecida.");
+  } else if (agua.material instanceof BABYLON.StandardMaterial) {
+    agua.material.diffuseColor = tinte;
+    agua.material.alpha = Math.max(agua.material.alpha, 0.82);
+    console.log("Agua del salón griego oscurecida.");
+  }
+}
+
+// Rumbo recto (sin diagonales) desde un puesto hasta la cara más cercana del
+// AABB de la mesa. yaw=0 mira a +Z; yaw=π/2 mira a +X.
+function yawRectoHaciaCaja(
+  posicion: BABYLON.Vector3,
+  min: BABYLON.Vector3,
+  max: BABYLON.Vector3
+): number {
+  let dx = 0;
+  if (posicion.x < min.x) dx = min.x - posicion.x;
+  else if (posicion.x > max.x) dx = max.x - posicion.x;
+
+  let dz = 0;
+  if (posicion.z < min.z) dz = min.z - posicion.z;
+  else if (posicion.z > max.z) dz = max.z - posicion.z;
+
+  if (Math.abs(dx) >= Math.abs(dz) && dx !== 0) {
+    return dx > 0 ? Math.PI / 2 : -Math.PI / 2;
+  }
+  if (dz !== 0) {
+    return dz > 0 ? 0 : Math.PI;
+  }
+  return Math.atan2(
+    (min.x + max.x) / 2 - posicion.x,
+    (min.z + max.z) / 2 - posicion.z
+  );
+}
+
 // Caja del recinto cuando el .glb NO trae el mesh "room" (exportación actual).
 // x/z salen del parqué (Cube.021) y, si no lo hubiera, de la unión de la
 // estructura; y sale del techo de las mallas de estructura que caen sobre el
@@ -821,7 +981,7 @@ function cajaDelRecintoPorGeometria(
   }
   if (!estructura.length) return null;
 
-  const piso = estructura.find((m) => m.name === "Cube.021") ?? null;
+  const piso = buscarMallaPiso(estructura);
   const paraXZ = piso ? [piso] : estructura;
 
   const min = new BABYLON.Vector3(Infinity, SUELO_Y, Infinity);
@@ -844,6 +1004,41 @@ function cajaDelRecintoPorGeometria(
   }
   if (max.y <= min.y) return null;
 
+  return { min, max };
+}
+
+// El empty rectangular "piso" marca la huella andable del salon nuevo. El
+// export de Blender no le pone geometria, pero si conserva su matriz: se
+// transforman las 8 esquinas del cubo base (2x2x2, como el cubo por defecto de
+// Blender) para obtener el rectangulo en coordenadas del mundo. La escala del
+// empty (30.15 x 20.91) son las medias dimensiones: el aula queda en ~60 x 42.
+function cajaDelEmptyPiso(nodo: BABYLON.TransformNode): {
+  min: BABYLON.Vector3;
+  max: BABYLON.Vector3;
+} | null {
+  nodo.computeWorldMatrix(true);
+  const matriz = nodo.getWorldMatrix();
+  const min = new BABYLON.Vector3(Infinity, Infinity, Infinity);
+  const max = new BABYLON.Vector3(-Infinity, -Infinity, -Infinity);
+
+  for (const x of [-1, 1]) {
+    for (const y of [-1, 1]) {
+      for (const z of [-1, 1]) {
+        const punto = BABYLON.Vector3.TransformCoordinates(
+          new BABYLON.Vector3(x, y, z),
+          matriz
+        );
+        min.x = Math.min(min.x, punto.x);
+        min.y = Math.min(min.y, punto.y);
+        min.z = Math.min(min.z, punto.z);
+        max.x = Math.max(max.x, punto.x);
+        max.y = Math.max(max.y, punto.y);
+        max.z = Math.max(max.z, punto.z);
+      }
+    }
+  }
+
+  if (!isFinite(min.x) || !isFinite(max.x) || min.x >= max.x || min.z >= max.z) return null;
   return { min, max };
 }
 
@@ -941,12 +1136,13 @@ function medirInteriorDelSalon(
 }
 
   async function cargarSalon(scene: BABYLON.Scene): Promise<BABYLON.AbstractMesh> {
-    // Usar siempre salon.glb como mapa principal
+    // El mapa se elige por el tipo de salón de la clase (normal/reunion/griego).
     const baseModelos = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
+    const archivoMapa = archivoSalon(tipoSalonActiva);
     const resultado = await BABYLON.SceneLoader.ImportMeshAsync(
       "",
       `${baseModelos}/models/mapes/`,
-      "salon.glb",
+      archivoMapa,
       scene
     );
 
@@ -963,22 +1159,20 @@ function medirInteriorDelSalon(
   salon.computeWorldMatrix(true);
 
     {
-      // salon.glb: centrar el AULA en (0,0) para que el spawn del centro de
-    // la clase caiga en mitad del parquÃ©, y apoyar la CARA SUPERIOR del parquÃ©
-    // exactamente en SUELO_Y, que es donde pisa el personaje. Se centra sobre la
-    // malla del piso (Cube.021, material "Beech Wood Flooring Planks"); si un
-    // export futuro la renombra, se cae a la caja del modelo entero y el spawn
-    // queda en una esquina. El AABB se mide con la escala ya puesta y la posiciÃ³n
-    // todavÃ­a en cero, asÃ­ que el centrado sale directo en unidades del mundo con
-    // el flip del loader incluido.
+      // Centrar el AULA en (0,0) para que el spawn del centro de la clase caiga
+    // en mitad del parquÃ©, y apoyar la SUPERFICIE ANDABLE del piso exactamente
+    // en SUELO_Y, que es donde pisa el personaje. Se centra sobre la malla
+    // "floor" (o "Cube.021" en exports antiguos); si no aparece, se usa la malla
+    // de material de piso con mayor huella XZ. El AABB se mide con la escala ya
+    // puesta y la posiciÃ³n todavÃ­a en cero, asÃ­ que el centrado sale directo en
+    // unidades del mundo con el flip del loader incluido.
     //
-    // OJO: en la exportaciÃ³n del 7/10 el parquÃ© NO estÃ¡ en y=0 (estÃ¡ en -0.34),
-    // asÃ­ que apoyar el y=0 en SUELO_Y dejarÃ­a al personaje flotando 0.93 u
-    // sobre la laja (y la cadera no calzarÃ­a con la mesa). Por eso primero se
-    // centra en XZ con y=0 y luego se mide con un rayo, justo en el spawn, la
-    // altura REAL del parquÃ© para desplazar el salÃ³n: suelo medido = SUELO_Y,
-    // pies clavados en la laja.
-    const mallaPiso = resultado.meshes.find((m) => m.name === "Cube.021") ?? null;
+    // El piso puede ser una losa gruesa o tener un hueco central: por eso NO se
+    // usa el canto inferior ni el rayo desde dentro. Se lanza un rayo desde
+    // ARRIBA en el centro y en cuatro esquinas interiores, y se apoya en SUELO_Y
+    // la primera superficie que golpea. AsÃ­ los pies quedan ni flotando ni
+    // enterrados en normal, reuniÃ³n y griego.
+    const mallaPiso = buscarMallaPiso(resultado.meshes);
     const aCentrar = mallaPiso ? [mallaPiso] : resultado.meshes;
     const min = new BABYLON.Vector3(
       Number.POSITIVE_INFINITY,
@@ -1009,20 +1203,45 @@ function medirInteriorDelSalon(
     if (mallaPiso) {
       mallaPiso.computeWorldMatrix(true);
       mallaPiso.refreshBoundingInfo(false, false);
-      // Rayo SOLO contra el piso, lanzado un poco por encima de su canto inferior
-      // y justo donde caerÃ¡ el spawn (0,0): la primera cara del parquÃ© que tope
-      // es la superficie andable.
-      const rayoSuelo = scene.pickWithRay(
-        new BABYLON.Ray(new BABYLON.Vector3(0, min.y + 1, 0), new BABYLON.Vector3(0, -1, 0), 4),
-        (malla) => malla === mallaPiso
-      );
-      if (rayoSuelo?.hit && rayoSuelo.pickedPoint) sueloMedido = rayoSuelo.pickedPoint.y;
+      const cajaPiso = mallaPiso.getBoundingInfo().boundingBox;
+      const pisoMin = cajaPiso.minimumWorld;
+      const pisoMax = cajaPiso.maximumWorld;
+      const grosor = Math.max(1, pisoMax.y - pisoMin.y);
+      const inicioY = pisoMax.y + grosor + 5;
+      const largoRayo = grosor * 3 + 10;
+      const anchoX = pisoMax.x - pisoMin.x;
+      const anchoZ = pisoMax.z - pisoMin.z;
+      // Se lanza desde ARRIBA contra la superficie andable. No desde dentro de
+      // la losa: en normal/reunion el rayo interior golpeaba la cara inferior,
+      // y en griego el centro es un hueco. Se prueban centro y cuatro esquinas
+      // interiores para que un hueco central no deje el suelo sin medir.
+      const muestras: Array<[number, number]> = [
+        [0, 0],
+        [pisoMin.x + anchoX * 0.25, pisoMin.z + anchoZ * 0.25],
+        [pisoMax.x - anchoX * 0.25, pisoMin.z + anchoZ * 0.25],
+        [pisoMin.x + anchoX * 0.25, pisoMax.z - anchoZ * 0.25],
+        [pisoMax.x - anchoX * 0.25, pisoMax.z - anchoZ * 0.25],
+      ];
+      for (const [x, z] of muestras) {
+        const rayoSuelo = scene.pickWithRay(
+          new BABYLON.Ray(
+            new BABYLON.Vector3(x, inicioY, z),
+            new BABYLON.Vector3(0, -1, 0),
+            largoRayo
+          ),
+          (malla) => malla === mallaPiso
+        );
+        if (rayoSuelo?.hit && rayoSuelo.pickedPoint) {
+          sueloMedido = rayoSuelo.pickedPoint.y;
+          break;
+        }
+      }
     }
     salon.position.y = SUELO_Y - sueloMedido;
     salon.computeWorldMatrix(true);
 
     console.log(
-      `salon.glb: ` +
+      `${archivoMapa} (${tipoSalonActiva}): ` +
         `centrado sobre ${mallaPiso ? `"${mallaPiso.name}" (el piso)` : "la caja del modelo"}: ` +
         `x[${min.x.toFixed(1)}, ${max.x.toFixed(1)}] ` +
         `y[${min.y.toFixed(1)}, ${max.y.toFixed(1)}] ` +
@@ -1032,12 +1251,27 @@ function medirInteriorDelSalon(
     );
   }
 
+  quitarExtrasDelSalonGriego(resultado.meshes);
+  oscurecerAguaDelSalonGriego(resultado.meshes);
+
   paresSillas.length = 0;
   obstaculosSolidos.length = 0;
   atril = null;
 
   const todasLasMallas = resultado.meshes;
   const todosLosNodos = [...resultado.transformNodes, ...resultado.meshes];
+
+  // EMPTY "piso": huella rectangular del salon. Si existe, manda sobre la caja
+  // aproximada por geometria; los rayos de medirInteriorDelSalon y el recorte
+  // final la siguen afinando contra las paredes reales.
+  const nodoPiso = todosLosNodos.find((n) => n.name.trim().toLowerCase() === "piso");
+  const cajaPiso = nodoPiso ? cajaDelEmptyPiso(nodoPiso) : null;
+  if (cajaPiso) {
+    console.log(
+      `Empty "piso" -> x[${cajaPiso.min.x.toFixed(2)}, ${cajaPiso.max.x.toFixed(2)}] ` +
+        `z[${cajaPiso.min.z.toFixed(2)}, ${cajaPiso.max.z.toFixed(2)}]`
+    );
+  }
 
   // EMPTIES DE APARICION: "Spawn1".."Spawn12" (pasillos) y "Spawn_Profe".
   // El loader glTF convierte los empties de Blender en TransformNode; su
@@ -1114,8 +1348,15 @@ function medirInteriorDelSalon(
     // andando por la pared. Ahora toda malla con geometría que no sea mueble
     // es estructura (esMallaEstructura); los muebles (incluido el cabinet)
     // ya salieron arriba.
-    mesh.checkCollisions = esMallaEstructura(mesh);
+    mesh.checkCollisions = esColisionDeEstructura(mesh);
   });
+
+  if (tipoSalonActiva === "griego") {
+    const conColision = todasLasMallas
+      .filter((m) => m.checkCollisions)
+      .map((m) => m.name);
+    console.log(`Colisiones de estructura (griego) -> ${conColision.join(", ") || "ninguna"}`);
+  }
 
   console.log(
     `ObstÃ¡culos sÃ³lidos -> ${obstaculosSolidos.length}: ` +
@@ -1172,10 +1413,20 @@ function medirInteriorDelSalon(
         `z[${bb.minimumWorld.z.toFixed(2)}, ${bb.maximumWorld.z.toFixed(2)}]`
     );
   } else {
+    // La geometria aporta la ALTURA (muros y techo); el empty "piso" aporta la
+    // huella x/z. No se usa su altura: es una losa fina y los muros "limite*"
+    // tienen que nacer a la altura real del recinto.
     cajaRecinto = cajaDelRecintoPorGeometria(todasLasMallas);
+    if (cajaRecinto && cajaPiso) {
+      cajaRecinto.min.x = cajaPiso.min.x;
+      cajaRecinto.max.x = cajaPiso.max.x;
+      cajaRecinto.min.z = cajaPiso.min.z;
+      cajaRecinto.max.z = cajaPiso.max.z;
+    }
     if (cajaRecinto) {
       console.log(
-        `Sin mesh "room": recinto armado desde la geometría -> ` +
+        `Sin mesh "room": recinto armado` +
+          `${cajaPiso ? ' con la huella del empty "piso"' : ""} -> ` +
           `x[${cajaRecinto.min.x.toFixed(2)}, ${cajaRecinto.max.x.toFixed(2)}] ` +
           `y[${cajaRecinto.min.y.toFixed(2)}, ${cajaRecinto.max.y.toFixed(2)}] ` +
           `z[${cajaRecinto.min.z.toFixed(2)}, ${cajaRecinto.max.z.toFixed(2)}]`
@@ -1191,6 +1442,24 @@ function medirInteriorDelSalon(
       min.copyFrom(interior.min);
       max.copyFrom(interior.max);
     }
+
+    // El "piso" recorta el recinto a la huella real: nunca deja el aula mas
+    // grande que el rectangulo andable, y si la medida por rayos falla el
+    // empty sigue conteniendo al personaje y a la camara.
+    if (cajaPiso) {
+      min.x = Math.max(min.x, cajaPiso.min.x);
+      min.z = Math.max(min.z, cajaPiso.min.z);
+      max.x = Math.min(max.x, cajaPiso.max.x);
+      max.z = Math.min(max.z, cajaPiso.max.z);
+      if (min.x >= max.x || min.z >= max.z) {
+        console.warn('El empty "piso" no deja un recinto valido: se ignora.');
+        min.x = cajaRecinto.min.x;
+        max.x = cajaRecinto.max.x;
+        min.z = cajaRecinto.min.z;
+        max.z = cajaRecinto.max.z;
+      }
+    }
+
     limitesSalon = { min, max };
 
     const GROSOR = 2;
@@ -1345,6 +1614,34 @@ function medirInteriorDelSalon(
     }
   });
 
+  const cajaMesaPrincipal = (): { min: BABYLON.Vector3; max: BABYLON.Vector3 } | null => {
+    let mejorMalla: BABYLON.AbstractMesh | null = null;
+    let mejorArea = 0;
+    for (const malla of todasLasMallas) {
+      if (/chair/i.test(malla.name)) continue;
+      if (!/mesa|table/i.test(malla.name)) continue;
+      if (!malla.getVerticesData(BABYLON.VertexBuffer.PositionKind)) continue;
+      malla.computeWorldMatrix(true);
+      malla.refreshBoundingInfo(false, false);
+      const bb = malla.getBoundingInfo().boundingBox;
+      const area =
+        (bb.maximumWorld.x - bb.minimumWorld.x) *
+        (bb.maximumWorld.z - bb.minimumWorld.z);
+      if (area > mejorArea) {
+        mejorArea = area;
+        mejorMalla = malla;
+      }
+    }
+    if (!mejorMalla) return null;
+    const bb = mejorMalla.getBoundingInfo().boundingBox;
+    return {
+      min: bb.minimumWorld.clone(),
+      max: bb.maximumWorld.clone(),
+    };
+  };
+
+  const cajaMesa = cajaMesaPrincipal();
+
   mapaSillas.forEach((meshSilla, num) => {
     meshSilla.computeWorldMatrix(true);
     let posSilla: BABYLON.Vector3;
@@ -1390,6 +1687,36 @@ function medirInteriorDelSalon(
     });
   });
 
+  // Mapas sin "desk_chair" (salón de reuniones): los puestos son los empties
+  // sit_1..sit_9. Se usa el AABB de la mesa más grande para que cada asiento
+  // mire RECTO a su borde más cercano, en vez de fiarse del giro del empty.
+  if (!paresSillas.length && mapaSits.size) {
+    mapaSits.forEach((nodoSit, num) => {
+      nodoSit.computeWorldMatrix(true);
+      const posSit = nodoSit.absolutePosition.clone();
+      let yaw = nodoSit.rotationQuaternion
+        ? nodoSit.rotationQuaternion.toEulerAngles().y
+        : nodoSit.rotation.y;
+      if (cajaMesa) {
+        yaw = yawRectoHaciaCaja(posSit, cajaMesa.min, cajaMesa.max);
+      }
+      paresSillas.push({
+        numero: num,
+        posicionMundoSilla: posSit.clone(),
+        puntoSit: { posicion: posSit, rotacionY: yaw },
+        rotacionSilla: yaw,
+      });
+    });
+    const centroX = cajaMesa ? (cajaMesa.min.x + cajaMesa.max.x) / 2 : 0;
+    const centroZ = cajaMesa ? (cajaMesa.min.z + cajaMesa.max.z) / 2 : 0;
+    console.log(
+      `Sillas por empties sit_* -> ${paresSillas.length}` +
+        (cajaMesa
+          ? ` (mirando recto a la mesa en ${centroX.toFixed(2)}, ${centroZ.toFixed(2)})`
+          : " (sin mesa de referencia)")
+    );
+  }
+
   let meshAtril: BABYLON.AbstractMesh | null = null;
   for (const mesh of todasLasMallas) {
     if (mesh.name.toLowerCase().includes("lecturn")) {
@@ -1412,11 +1739,13 @@ function medirInteriorDelSalon(
       : BABYLON.Vector3.Zero();
 
     let posEnsenar: BABYLON.Vector3;
+    let posSentadoAtril: BABYLON.Vector3 | null = null;
     let rotEnsenar = Math.PI;
 
     if (nodoTeach) {
       nodoTeach.computeWorldMatrix(true);
-      posEnsenar = nodoTeach.absolutePosition.clone();
+      posSentadoAtril = nodoTeach.absolutePosition.clone();
+      posEnsenar = posSentadoAtril.clone();
       // Nota: puntoEnsenar hoy no se lee en ninguna parte (la cÃ¡mara del atril
       // se arma en funcionalidades con detrasDelAtril + alturaOjoProfesor).
       posEnsenar.y += alturaOjoActiva;
@@ -1437,6 +1766,16 @@ function medirInteriorDelSalon(
     atril = {
       posicionAtril: posAtril,
       puntoEnsenar: { posicion: posEnsenar, rotacionY: rotEnsenar },
+      sentado: tipoSalonActiva === "reunion",
+      puntoSentado:
+        tipoSalonActiva === "reunion" && posSentadoAtril
+          ? {
+              posicion: posSentadoAtril,
+              rotacionY: cajaMesa
+                ? yawRectoHaciaCaja(posSentadoAtril, cajaMesa.min, cajaMesa.max)
+                : rotEnsenar,
+            }
+          : undefined,
     };
   }
 
@@ -1470,6 +1809,10 @@ const limpiadoresDePartida: Array<() => void> = [];
 // mÃ³dulo de presencia (para meterse en la sala "clase:CODIGO") y la pÃ­ldora de
 // conectados, que lo enseÃ±a arriba a la izquierda.
 let claseActiva = "";
+
+// Tipo de salón elegido al crear la clase. Se fija en entrarAlSalon() antes
+// de montar la escena y cargarSalon() lo usa para importar el .glb correcto.
+let tipoSalonActiva: TipoSalon = "normal";
 
 /**
  * VOLUMEN DE LA APP: manda sobre todo lo que suena DENTRO del metaverso â€” el vÃ­deo
@@ -1521,10 +1864,10 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
   const radioVertical = (SUELO_Y + alturaOjoActiva) / 2;
   camara.ellipsoid = new BABYLON.Vector3(0.5, radioVertical, 0.5);
   camara.ellipsoidOffset = new BABYLON.Vector3(0, radioVertical, 0);
-  // La cÃ¡mara NO colisiona por su cuenta: su posiciÃ³n se copia 1:1 desde el modelo 3D
-  // en cada frame, asÃ­ que su colisiÃ³n y su gravedad solo la desalinearÃ­an (y cobrarÃ­an
-  // un barrido de colisiones completo por frame sin motivo). El encierro lo resuelven los
-  // muros "limite*" + recortarAlSalon().
+  // La cÃ¡mara NO usa el motor de colisiones: su posiciÃ³n se copia 1:1 desde el
+  // modelo 3D en cada frame. En tercera persona, pegarCamaraAlCuerpo lanza un
+  // rayo contra los muros (mallas con checkCollisions) para acercarla y que no
+  // los atraviese; recortarAlSalon() sigue cerrando el paso a los límites.
   camara.checkCollisions = false;
   camara.applyGravity = false;
   camara.minZ = 0.1;
@@ -1566,8 +1909,28 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     console.warn("Sin malla de tablero en este mapa: no habrá proyección.");
   }
 
-  const sueloColision = BABYLON.MeshBuilder.CreateGround("sueloColision", { width: 100, height: 100 }, scene);
-  sueloColision.position = new BABYLON.Vector3(0, SUELO_Y, 0);
+  // Suelo de colision con la huella del aula (sale del empty "piso" cuando el
+  // mapa lo trae). Antes era un cuadrado fijo de 100x100 que no representaba
+  // el salon real. Sigue siendo invisible y solo frena la gravedad.
+  const anchoSuelo = limitesSalon
+    ? Math.max(1, limitesSalon.max.x - limitesSalon.min.x)
+    : 100;
+  const fondoSuelo = limitesSalon
+    ? Math.max(1, limitesSalon.max.z - limitesSalon.min.z)
+    : 100;
+  const centroSuelo = limitesSalon
+    ? new BABYLON.Vector3(
+        (limitesSalon.min.x + limitesSalon.max.x) / 2,
+        SUELO_Y,
+        (limitesSalon.min.z + limitesSalon.max.z) / 2
+      )
+    : new BABYLON.Vector3(0, SUELO_Y, 0);
+  const sueloColision = BABYLON.MeshBuilder.CreateGround(
+    "sueloColision",
+    { width: anchoSuelo, height: fondoSuelo },
+    scene
+  );
+  sueloColision.position = centroSuelo;
   sueloColision.checkCollisions = true;
   sueloColision.isVisible = false;
 
@@ -1935,6 +2298,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     // el botÃ³n. El enlace se vuelve a escribir al entrar (ver entrarAlSalon).
     escribirClaseEnLaUrl(null);
     claseActiva = "";
+    tipoSalonActiva = "normal";
 
     scene.dispose();
 
@@ -2117,6 +2481,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
 
 function entrarAlSalon(clase: Clase) {
   claseActiva = clase.codigo;
+  tipoSalonActiva = normalizarTipoSalon(clase.tipoSalon);
   // La direcciÃ³n pasa a ser la de esta clase: es lo que permite copiar el
   // enlace del navegador y pasÃ¡rselo a otro para que entre a la MISMA.
   escribirClaseEnLaUrl(clase.codigo);

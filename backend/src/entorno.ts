@@ -28,4 +28,18 @@ export const ENTORNO = {
   /** Orígenes permitidos para el frontend (cors). */
   ORIGENES: process.env.CORS_ORIGENES || "*",
   JWT_SECRET: process.env.JWT_SECRET || "campus_metaverso_secret",
+
+  /** Correo saliente para los códigos de verificación. */
+  SMTP_HOST: process.env.SMTP_HOST || "",
+  SMTP_PORT: Number(process.env.SMTP_PORT || 587),
+  SMTP_SECURE: process.env.SMTP_SECURE === "true",
+  SMTP_USER: process.env.SMTP_USER || "",
+  SMTP_PASS: process.env.SMTP_PASS || "",
+  SMTP_FROM: process.env.SMTP_FROM || "",
+
+  /** Secreto para firmar los códigos de verificación. */
+  CODIGO_SECRET:
+    process.env.CODIGO_SECRET ||
+    process.env.JWT_SECRET ||
+    "campus_metaverso_codigo",
 };

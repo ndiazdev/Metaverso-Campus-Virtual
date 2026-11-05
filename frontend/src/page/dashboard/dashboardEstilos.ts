@@ -1140,6 +1140,132 @@ export const ESTILOS_COMUNES = `
     box-shadow: 0 24px 60px color-mix(in srgb, var(--c-sombra) 22%, transparent);
   }
 
+  .dash-modal-clase {
+    width: 980px;
+    max-width: calc(100vw - 40px);
+    padding: 30px 34px 28px;
+  }
+
+  .dash-salon-campo {
+    border: 0;
+    margin: 0 0 16px 0;
+    padding: 0;
+    text-align: left;
+  }
+
+  .dash-salon-campo legend {
+    padding: 0;
+    margin: 0 0 4px 0;
+  }
+
+  .dash-salon-ayuda {
+    margin: 0 0 12px 0 !important;
+    font-size: 13px !important;
+  }
+
+  .dash-salon-opciones {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 14px;
+  }
+
+  .dash-salon-opcion {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    min-width: 0;
+    padding: 12px;
+    border: 2px solid var(--c-borde);
+    border-radius: 11px;
+    background: var(--c-superficie-suave);
+    cursor: pointer;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease,
+      transform 0.15s ease;
+  }
+
+  .dash-salon-opcion:hover {
+    border-color: var(--c-texto-tenue);
+    transform: translateY(-1px);
+  }
+
+  .dash-salon-opcion.seleccionada {
+    border-color: var(--c-acento);
+    box-shadow: 0 6px 18px color-mix(in srgb, var(--c-acento) 22%, transparent);
+  }
+
+  .dash-salon-opcion input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .dash-salon-imagen {
+    width: 100%;
+    height: 160px;
+    object-fit: cover;
+    border-radius: 7px;
+    display: block;
+  }
+
+  .dash-salon-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    min-width: 0;
+  }
+
+  .dash-salon-info strong {
+    color: var(--c-texto);
+    font-size: 14px;
+    line-height: 1.25;
+  }
+
+  .dash-salon-info small {
+    color: var(--c-texto-suave);
+    font-size: 12px;
+    line-height: 1.35;
+  }
+
+  .dash-salon-marca {
+    position: absolute;
+    top: 14px;
+    right: 14px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: var(--c-acento);
+    color: var(--c-texto-boton);
+    font-size: 11px;
+    opacity: 0;
+    transform: scale(0.7);
+    transition: opacity 0.15s ease, transform 0.15s ease;
+  }
+
+  .dash-salon-opcion.seleccionada .dash-salon-marca {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  @media (max-width: 640px) {
+    .dash-salon-opciones {
+      grid-template-columns: 1fr;
+    }
+
+    .dash-salon-opcion {
+      display: grid;
+      grid-template-columns: 140px 1fr;
+      align-items: center;
+    }
+
+    .dash-salon-imagen {
+      height: 96px;
+    }
+  }
+
   /* X de salida: cierra el modal sin crear nada (igual que ESC o
      clic fuera). Siempre presente en la esquina superior derecha. */
   .dash-modal-cerrar {

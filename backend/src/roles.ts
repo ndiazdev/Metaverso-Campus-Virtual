@@ -4,8 +4,9 @@
 // El rol de una cuenta se deduce de su correo:
 //   · dominio distinto de @usantoto.edu.co → invitado
 //   · profe. / profesor. / docente.        → docente
-//   · admin / admin.                       → admin
 //   · cualquier otro                       → estudiante
+// El rol admin no se deduce del correo: solo lo asigna
+// un administrador desde el panel.
 // ======================================================
 
 export function detectarRolPorCorreo(correo: string): string {
@@ -23,10 +24,6 @@ export function detectarRolPorCorreo(correo: string): string {
 
   if (prefijosDocente.some((prefijo) => parteLocal.startsWith(prefijo))) {
     return "docente";
-  }
-
-  if (parteLocal === "admin" || parteLocal.startsWith("admin.")) {
-    return "admin";
   }
 
   return "estudiante";

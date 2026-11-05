@@ -73,6 +73,10 @@ export interface ParSilla {
 export interface Atril {
   posicionAtril: BABYLON.Vector3;
   puntoEnsenar: { posicion: BABYLON.Vector3; rotacionY: number };
+  /** Si el docente debe quedar SENTADO en el atril (salón de reuniones). */
+  sentado?: boolean;
+  /** Punto de cadera del asiento del atril; solo si `sentado` es true. */
+  puntoSentado?: { posicion: BABYLON.Vector3; rotacionY: number };
 }
 
 export interface ObstaculoSolido {
@@ -184,6 +188,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   let modoTerceraPersona = false;
   let sentado = false;
   let enEscritorio = false;
+  let sentadoEnAtril = false;
   let parCercano: ParSilla | null = null;
   let cercaDelAtril = false;
   let posicionGuardada: BABYLON.Vector3 | null = null;
@@ -249,6 +254,39 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   // que ya no hace falta entregar los huesos del esqueleto.
 
   /**
+   * Acerca la cámara si el tramo entre el cuerpo y su posición deseada cruza un
+   * muro. Se lanza un rayo solo contra mallas con colisión (muros, pilares y
+   * límites del salón); las mesas/sillas no frenan la cámara porque no tienen
+   * `checkCollisions`.
+   */
+  function camaraSinAtravesarParedes(
+    origen: BABYLON.Vector3,
+    destino: BABYLON.Vector3,
+    personaje: Personaje
+  ): BABYLON.Vector3 {
+    const direccion = destino.subtract(origen);
+    const distancia = direccion.length();
+    if (distancia < 1e-3) return destino;
+    direccion.normalize();
+
+    const impacto = ctx.escena.pickWithRay(
+      new BABYLON.Ray(origen, direccion, distancia),
+      (malla) => {
+        if (!malla.isEnabled() || !malla.checkCollisions) return false;
+        if (malla === personaje.raiz) return false;
+        if (malla.isDescendantOf?.(personaje.raiz)) return false;
+        return true;
+      }
+    );
+
+    if (!impacto?.hit || !impacto.pickedPoint) return destino;
+
+    // Un pequeño margen evita que la cámara quede pegada a la cara del muro.
+    const distanciaSegura = Math.max(0.2, impacto.distance - 0.35);
+    return origen.add(direccion.scale(distanciaSegura));
+  }
+
+  /**
    * Coloca la cámara donde le toca según el cuerpo 3D y el modo 1ª/3ª persona.
    *
    * La usan dos sitios: el bucle de render (caminando) y los teletransportes
@@ -270,12 +308,26 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     const offsetEnSilla = modoTerceraPersona
       ? personaje.offsetTerceraPersonaSentado
       : personaje.offsetPrimeraPersonaSentado;
-    const offsetActual = sentado && offsetEnSilla ? offsetEnSilla : offsetDePie;
+    const poseSentado = sentado || sentadoEnAtril;
+    const offsetActual = poseSentado && offsetEnSilla ? offsetEnSilla : offsetDePie;
 
     const matrizRotacion = BABYLON.Matrix.RotationY(yaw);
     const offsetMundo = BABYLON.Vector3.TransformCoordinates(offsetActual, matrizRotacion);
+    const destino = personaje.raiz.position.add(offsetMundo);
 
-    ctx.camara.position.copyFrom(personaje.raiz.position.add(offsetMundo));
+    if (modoTerceraPersona) {
+      // Se lanza el rayo a la altura de la cámara para que un muro bajo no la
+      // frene si realmente se ve por encima de él.
+      const origen = personaje.raiz.position.add(
+        new BABYLON.Vector3(0, offsetActual.y, 0)
+      );
+      ctx.camara.position.copyFrom(
+        camaraSinAtravesarParedes(origen, destino, personaje)
+      );
+    } else {
+      ctx.camara.position.copyFrom(destino);
+    }
+
     // En tercera persona el offset puede sacar la cámara del salón aunque la persona
     // esté dentro: se recorta a los límites del mesh "room".
     ctx.recortarAlSalon(ctx.camara.position);
@@ -287,6 +339,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
   }
 
   function alternarAtril(): void {
+    if (sentado) return;
     const atril = ctx.atril();
     const personaje = ctx.personaje();
     const obstaculos = ctx.obstaculos();
@@ -328,63 +381,96 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       // yaw=π/2 mira a +X, es decir yaw = atan2(dir.x, dir.z).
       const rumbo = Math.atan2(alFrente.x, alFrente.z);
 
-      // ── ¿DÓNDE SE PONE? ────────────────────────────────────────────────────
-      // Detrás del atril hay que retroceder su media profundidad + el radio del
-      // cuerpo + un hueco, o el modelo queda dentro de la madera. La caja que se usa
-      // es la más cercana al centro del atril, que es la del propio atril.
-      let mediaFondo = 0.6;
-      let distanciaMejor = Infinity;
-      for (const obs of obstaculos) {
-        const dx = (obs.min.x + obs.max.x) / 2 - atril.posicionAtril.x;
-        const dz = (obs.min.z + obs.max.z) / 2 - atril.posicionAtril.z;
-        const distancia = Math.hypot(dx, dz);
-        if (distancia < distanciaMejor) {
-          distanciaMejor = distancia;
-          // proyección de la caja sobre la dirección de la clase
-          mediaFondo =
-            (Math.abs(alFrente.x) * (obs.max.x - obs.min.x) +
-              Math.abs(alFrente.z) * (obs.max.z - obs.min.z)) /
-            2;
-        }
-      }
-
-      const detrasDelAtril = new BABYLON.Vector3(
-        atril.posicionAtril.x - alFrente.x * (mediaFondo + ctx.radioPersonaje + 0.35),
-        ctx.sueloY, // el suelo REAL del mapa, para no dejar el cuerpo flotando en el aire
-        atril.posicionAtril.z - alFrente.z * (mediaFondo + ctx.radioPersonaje + 0.35)
+      const usarPoseSentado = Boolean(
+        atril.sentado && atril.puntoSentado && personaje?.offsetCaderaSentado
       );
+      sentadoEnAtril = usarPoseSentado;
 
-      // La red de seguridad del bucle de render NO corre mientras se está en el
-      // atril, así que aquí se corrige a mano por si el cálculo lo dejara rozando.
-      if (ctx.haySolape(detrasDelAtril)) ctx.empujarFueraDeObstaculos(detrasDelAtril);
-      ctx.recortarAlSalon(detrasDelAtril, ctx.radioPersonaje);
+      // La cámara mira al frente y el cuerpo apunta igual. La orientación se
+      // mantiene mientras dura el atril (el tablero, a la espalda), aunque el
+      // usuario gire la cabeza para mirar a los estudiantes.
+      const rumboAtril =
+        usarPoseSentado && atril.puntoSentado && Number.isFinite(atril.puntoSentado.rotacionY)
+          ? atril.puntoSentado.rotacionY
+          : rumbo;
+      ctx.camara.rotation.y = rumboAtril;
+      rumboFijo = rumboAtril;
 
-      // La cámara mira al frente y el cuerpo se coloca justo detrás apuntando igual.
-      // La orientación se mantiene mientras dura el atril (el tablero, a la espalda),
-      // aunque el usuario gire la cabeza para mirar a los estudiantes.
-      ctx.camara.rotation.y = rumbo;
-      rumboFijo = rumbo;
-      if (personaje) {
-        personaje.raiz.position.copyFrom(detrasDelAtril);
+      if (usarPoseSentado && personaje && atril.puntoSentado) {
+        // En el salón de reuniones el atril es una SILLA (TEACH_01): la cadera
+        // del clip sentado se apoya en ese punto, igual que en un sit_*.
         if (personaje.raiz.rotationQuaternion) {
-          // Raíz glTF con rotationQuaternion: hay que componer con la rotación base
-          // del loader, igual que hace el bucle de render al caminar.
           const base = personaje.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity();
           personaje.raiz.rotationQuaternion =
-            BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, rumbo).multiply(base);
+            BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, rumboAtril).multiply(base);
         } else {
-          personaje.raiz.rotation.y = rumbo;
+          personaje.raiz.rotation.y = rumboAtril;
         }
+
+        const cadera = personaje.offsetCaderaSentado!.subtract(
+          new BABYLON.Vector3(0, HOLGURA_CADERA_U, 0)
+        );
+        const girada = BABYLON.Vector3.TransformCoordinates(
+          cadera,
+          BABYLON.Matrix.RotationY(rumboAtril)
+        );
+        personaje.raiz.position = atril.puntoSentado.posicion.subtract(girada);
         pegarCamaraAlCuerpo();
       } else {
-        ctx.camara.position = detrasDelAtril.add(
-          new BABYLON.Vector3(0, ctx.alturaOjoProfesor, 0)
+        // ── ¿DÓNDE SE PONE? ──────────────────────────────────────────────────
+        // Detrás del atril hay que retroceder su media profundidad + el radio del
+        // cuerpo + un hueco, o el modelo queda dentro de la madera. La caja que se usa
+        // es la más cercana al centro del atril, que es la del propio atril.
+        let mediaFondo = 0.6;
+        let distanciaMejor = Infinity;
+        for (const obs of obstaculos) {
+          const dx = (obs.min.x + obs.max.x) / 2 - atril.posicionAtril.x;
+          const dz = (obs.min.z + obs.max.z) / 2 - atril.posicionAtril.z;
+          const distancia = Math.hypot(dx, dz);
+          if (distancia < distanciaMejor) {
+            distanciaMejor = distancia;
+            // proyección de la caja sobre la dirección de la clase
+            mediaFondo =
+              (Math.abs(alFrente.x) * (obs.max.x - obs.min.x) +
+                Math.abs(alFrente.z) * (obs.max.z - obs.min.z)) /
+              2;
+          }
+        }
+
+        const detrasDelAtril = new BABYLON.Vector3(
+          atril.posicionAtril.x - alFrente.x * (mediaFondo + ctx.radioPersonaje + 0.35),
+          ctx.sueloY, // el suelo REAL del mapa, para no dejar el cuerpo flotando en el aire
+          atril.posicionAtril.z - alFrente.z * (mediaFondo + ctx.radioPersonaje + 0.35)
         );
+
+        // La red de seguridad del bucle de render NO corre mientras se está en el
+        // atril, así que aquí se corrige a mano por si el cálculo lo dejara rozando.
+        if (ctx.haySolape(detrasDelAtril)) ctx.empujarFueraDeObstaculos(detrasDelAtril);
+        ctx.recortarAlSalon(detrasDelAtril, ctx.radioPersonaje);
+
+        if (personaje) {
+          personaje.raiz.position.copyFrom(detrasDelAtril);
+          if (personaje.raiz.rotationQuaternion) {
+            // Raíz glTF con rotationQuaternion: hay que componer con la rotación base
+            // del loader, igual que hace el bucle de render al caminar.
+            const base = personaje.rotacionBaseRaiz ?? BABYLON.Quaternion.Identity();
+            personaje.raiz.rotationQuaternion =
+              BABYLON.Quaternion.RotationAxis(BABYLON.Axis.Y, rumbo).multiply(base);
+          } else {
+            personaje.raiz.rotation.y = rumbo;
+          }
+          pegarCamaraAlCuerpo();
+        } else {
+          ctx.camara.position = detrasDelAtril.add(
+            new BABYLON.Vector3(0, ctx.alturaOjoProfesor, 0)
+          );
+        }
       }
 
       enEscritorio = true;
       ctx.aviso.style.display = "none";
     } else if (enEscritorio) {
+      sentadoEnAtril = false;
       if (posicionGuardada && personaje) {
         personaje.raiz.position = posicionGuardada.clone();
         personaje.raiz.position.y = ctx.sueloY;
@@ -392,11 +478,13 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       ctx.camara.rotation.y = rotacionGuardada;
       enEscritorio = false;
       ctx.alSalirDelAtril?.();
+      pegarCamaraAlCuerpo();
     }
     ctx.alCambiarEstado();
   }
 
   function alternarSentado(): void {
+    if (enEscritorio) return;
     const personaje = ctx.personaje();
     if (!sentado && parCercano) {
       posicionGuardada = personaje
@@ -405,12 +493,12 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       rotacionGuardada = ctx.camara.rotation.y;
       const punto = parCercano.puntoSit;
 
-      // "El frente" del puesto: el rumbo de la PROPIA silla (en el mapa
-      // actual, −90°, con la mesa justo a ese lado). Vengas desde donde
-      // vengas — de lado, por detrás… — al sentarte el cuerpo queda mirando
-      // al frente de SU puesto y la mirada arranca hacia ahí también (al
-      // levantarse, la cámara vuelve a rotacionGuardada como siempre). Sin
-      // rumbo fiable se conserva el de la cámara, como antes.
+      // "El frente" del puesto: el rumbo recto hacia la mesa (perpendicular a
+      // su borde más cercano, sin diagonales). Vengas desde donde vengas — de
+      // lado, por detrás… — al sentarte el cuerpo queda mirando al frente de SU
+      // puesto y la mirada arranca hacia ahí también (al levantarse, la cámara
+      // vuelve a rotacionGuardada como siempre). Sin rumbo fiable se conserva
+      // el de la cámara, como antes.
       let yaw = ctx.camara.rotation.y;
       if (Number.isFinite(parCercano.rotacionSilla)) {
         yaw = parCercano.rotacionSilla;
@@ -520,7 +608,8 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
       grupoAnimado = null;
     }
 
-    const preferido = sentado
+    const poseSentado = sentado || sentadoEnAtril;
+    const preferido = poseSentado
       ? manoAlzada && anim.manoSentado
         ? anim.manoSentado
         : anim.sentarse
@@ -695,7 +784,8 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
 
     // MÁQUINA DE ANIMACIÓN. Corre SIEMPRE (también sentado y en el atril): el
     // bloque de movimiento de arriba se salta esos estados y `sentado` solo se
-    // lee aquí abajo. En el atril no hay clip propio: se queda en "parado".
+    // lee aquí abajo. El atril normal no tiene clip propio (queda "parado");
+    // el de reunión usa la pose sentada porque es una silla (TEACH_01).
     aplicarAnimacion();
 
     // Se calcula siempre, aunque estés sentado o en el atril: la caja de YouTube
@@ -774,7 +864,7 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
     saludar,
     enElAtril: () => enEscritorio,
     estado: () => ({
-      sentado,
+      sentado: sentado || sentadoEnAtril,
       enEscritorio,
       terceraPersona: modoTerceraPersona,
       manoAlzada,

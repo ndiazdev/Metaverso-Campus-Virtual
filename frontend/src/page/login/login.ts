@@ -1,5 +1,5 @@
-import { guardarSesion, detectarRolPorCorreo } from "../../state/estado";
-import type { Cuenta, Rol } from "../../state/estado";
+import { guardarSesion } from "../../state/estado";
+import type { Cuenta } from "../../state/estado";
 import "@fortawesome/fontawesome-free/css/all.min.css";
 
 import { API_URL } from "../../api/cliente";
@@ -181,15 +181,22 @@ const ESTILOS = `
   .login-enlace { text-align: center; color: var(--c-texto-suave); font-size: 13.5px; margin: 18px 0 0 0; }
   .login-enlace a { color: var(--c-marca); font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 
-  /* ---------------- ROL DETECTADO (crear cuenta) ----------------
-     No se elige con una lista: la persona escribe su correo y este recuadro
-     aparece solo, con el rol que le corresponde. */
-  .login-rol-detectado {
-    margin: 0 0 16px; padding: 10px 14px; border-radius: 10px;
-    background: color-mix(in srgb, var(--c-marca) 7%, transparent); border: 1px solid color-mix(in srgb, var(--c-marca) 25%, transparent);
-    color: var(--c-marca); font-size: 13px; font-weight: 700; text-align: center;
-    display: none;
+  /* ---------------- CÓDIGO DE VERIFICACIÓN (crear cuenta) ---------------- */
+  .login-codigo-caja {
+    margin: 4px 0 16px; padding: 14px; border-radius: 12px;
+    background: color-mix(in srgb, var(--c-marca) 6%, transparent);
+    border: 1px solid color-mix(in srgb, var(--c-marca) 25%, transparent);
   }
+  .login-codigo-titulo { margin: 0 0 4px; font-size: 14px; font-weight: 800; color: var(--c-marca); }
+  .login-codigo-pista { margin: 0 0 12px; font-size: 12.5px; color: var(--c-texto-suave); line-height: 1.4; }
+  .login-input-codigo { text-align: center; font-size: 22px; letter-spacing: 8px; font-weight: 800; }
+  .login-codigo-acciones { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; }
+  .login-enlace-boton {
+    background: none; border: none; padding: 0; color: var(--c-marca); font: inherit;
+    font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline;
+    text-underline-offset: 3px;
+  }
+  .login-enlace-boton:disabled { color: var(--c-texto-tenue); cursor: not-allowed; text-decoration: none; }
 
   /* ---------------- SELECTOR DE IDIOMA / TEMA ----------------
      Va arriba a la derecha de la tarjeta para poder cambiar el
@@ -427,24 +434,6 @@ function vincularOjo(campo: HTMLInputElement, boton: HTMLButtonElement): void {
   });
 }
 
-// Igual que detectarRolPorCorreo, pero devuelve null mientras el correo todavía
-// se está escribiendo: así no le grita "Invitado!" a mitad de @usantoto.edu.co.
-function detectarMientrasSeEscribe(correo: string): Rol | null {
-  const limpio = correo.trim().toLowerCase();
-  if (limpio.length < 5 || !limpio.includes("@")) return null;
-
-  const dominio = limpio.split("@")[1] ?? "";
-  if (dominio.length === 0) return null;
-
-  // "@usantoto.e" a medio escribir: todavía no sabemos nada.
-  const institucional = "usantoto.edu.co";
-  if (dominio.length < institucional.length && institucional.startsWith(dominio)) {
-    return null;
-  }
-
-  return detectarRolPorCorreo(limpio);
-}
-
 export function iniciarLogin(alIniciarSesion: (cuenta: Cuenta) => void): void {
   // La dirección identifica la pantalla: sin cuenta se vive en /login,
   // así que abrir localhost:5173 queda en localhost:5173/login.
@@ -588,7 +577,9 @@ function mostrarFormularioRegistro(
     contrasena?: string;
     visible?: boolean;
     carrera?: string;
-    materia?: string;
+    codigo?: string;
+    codigoEnviado?: boolean;
+    correoEnviado?: string;
   } = {},
 ): void {
   const overlay = document.createElement("div");
@@ -610,10 +601,8 @@ function mostrarFormularioRegistro(
 
         <label class="login-etiqueta" for="campoCorreo">${t("login.correo")}</label>
         <div class="login-campo">
-          <input id="campoCorreo" class="login-input" type="email" placeholder="nombre.apellido@usantoto.edu.co" value="${estado.correo ?? ""}" />
+          <input id="campoCorreo" class="login-input" type="email" placeholder="nombre.apellido@correo.com" value="${estado.correo ?? ""}" ${estado.codigoEnviado ? "disabled" : ""} />
         </div>
-
-        <p class="login-rol-detectado" id="rolDetectado" style="display:none;"></p>
 
         <label class="login-etiqueta" for="campoContrasena">${t("perfil.contrasenaTitulo")}</label>
         <div class="login-campo login-campo-con-ojo">
@@ -623,23 +612,30 @@ function mostrarFormularioRegistro(
           </button>
         </div>
 
-        <div id="zonaEstudiante" style="display:none;">
+        <div id="zonaEstudiante">
           <label class="login-etiqueta" for="campoCarrera">${t("perfil.carrera")}</label>
           <div class="login-campo">
             <input id="campoCarrera" class="login-input" type="text" placeholder="${t("login.ph.carrera")}" value="${estado.carrera ?? ""}" />
           </div>
         </div>
 
-        <div id="zonaDocente" style="display:none;">
-          <label class="login-etiqueta" for="campoMateria">${t("login.materiaDicta")}</label>
+        <div class="login-codigo-caja" id="zonaCodigo" style="display:${estado.codigoEnviado ? "block" : "none"};">
+          <p class="login-codigo-titulo">${t("login.codigoTitulo")}</p>
+          <p class="login-codigo-pista" id="pistaCodigo">${estado.correoEnviado ? t("login.codigoPista", { correo: estado.correoEnviado }) : ""}</p>
+          <label class="login-etiqueta" for="campoCodigo">${t("login.codigoEtiqueta")}</label>
           <div class="login-campo">
-            <input id="campoMateria" class="login-input" type="text" placeholder="${t("login.ph.materia")}" value="${estado.materia ?? ""}" />
+            <input id="campoCodigo" class="login-input login-input-codigo" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" value="${estado.codigo ?? ""}" />
+          </div>
+          <button class="login-boton" id="botonVerificar">${t("login.botonVerificar")}</button>
+          <div class="login-codigo-acciones">
+            <button type="button" class="login-enlace-boton" id="botonReenviar">${t("login.reenviarCodigo")}</button>
+            <button type="button" class="login-enlace-boton" id="botonCambiarCorreo">${t("login.cambiarCorreo")}</button>
           </div>
         </div>
 
         <p class="login-error" id="mensajeError"></p>
 
-        <button class="login-boton" id="botonRegistrar">${t("login.botonRegistrarme")}</button>
+        <button class="login-boton" id="botonRegistrar" style="display:${estado.codigoEnviado ? "none" : "block"};">${t("login.botonEnviarCodigo")}</button>
 
         <p class="login-enlace">${t("login.yaTienesCuenta")} <a id="enlaceLogin">${t("login.enlaceIniciaSesion")}</a></p>
       </div>
@@ -653,13 +649,16 @@ function mostrarFormularioRegistro(
   iniciarCarrusel(overlay);
 
   // Igual que en el login: cambiar el idioma repinta y conserva lo escrito.
+  let correoEnviado = estado.correoEnviado ?? "";
+  let codigoEnviado = Boolean(estado.codigoEnviado);
+
   const repintarRegistro = (): void => {
     const campo = (sel: string): string =>
       overlay.querySelector<HTMLInputElement>(sel)?.value ?? "";
 
     // Se lee TODO antes de quitar la pantalla: luego el repintado
     // vuelve a crearla con estos mismos valores.
-    const estado = {
+    const estadoNuevo = {
       nombre: campo("#campoNombre"),
       correo: campo("#campoCorreo"),
       contrasena: campo("#campoContrasena"),
@@ -667,20 +666,14 @@ function mostrarFormularioRegistro(
         overlay.querySelector<HTMLInputElement>("#campoContrasena")?.type ===
         "text",
       carrera: campo("#campoCarrera"),
-      materia: campo("#campoMateria"),
+      codigo: campo("#campoCodigo"),
+      codigoEnviado,
+      correoEnviado,
     };
 
     overlay.remove();
 
-    mostrarFormularioRegistro(alIniciarSesion, estado);
-
-    // El recuadro del rol y los campos extra (carrera/materia) dependen
-    // del correo: se vuelven a calcular en la pantalla nueva.
-    if (estado.correo) {
-      overlay
-        .querySelector<HTMLInputElement>("#campoCorreo")
-        ?.dispatchEvent(new Event("input"));
-    }
+    mostrarFormularioRegistro(alIniciarSesion, estadoNuevo);
   };
 
   conectarSelectorLogin(overlay, repintarRegistro);
@@ -692,80 +685,123 @@ function mostrarFormularioRegistro(
   const botonOjo = overlay.querySelector<HTMLButtonElement>("#botonOjo")!;
   const campoCarrera =
     overlay.querySelector<HTMLInputElement>("#campoCarrera")!;
-  const campoMateria =
-    overlay.querySelector<HTMLInputElement>("#campoMateria")!;
+  const campoCodigo =
+    overlay.querySelector<HTMLInputElement>("#campoCodigo")!;
   const mensajeError =
     overlay.querySelector<HTMLParagraphElement>("#mensajeError")!;
   const botonRegistrar =
     overlay.querySelector<HTMLButtonElement>("#botonRegistrar")!;
+  const botonVerificar =
+    overlay.querySelector<HTMLButtonElement>("#botonVerificar")!;
+  const botonReenviar =
+    overlay.querySelector<HTMLButtonElement>("#botonReenviar")!;
+  const botonCambiarCorreo =
+    overlay.querySelector<HTMLButtonElement>("#botonCambiarCorreo")!;
+  const zonaCodigo = overlay.querySelector<HTMLDivElement>("#zonaCodigo")!;
+  const pistaCodigo =
+    overlay.querySelector<HTMLParagraphElement>("#pistaCodigo")!;
   const enlaceLogin = overlay.querySelector<HTMLAnchorElement>("#enlaceLogin")!;
-  const rolDetectadoDiv =
-    overlay.querySelector<HTMLDivElement>("#rolDetectado")!;
-  const zonaEstudiante =
-    overlay.querySelector<HTMLDivElement>("#zonaEstudiante")!;
-  const zonaDocente = overlay.querySelector<HTMLDivElement>("#zonaDocente")!;
 
   vincularOjo(campoContrasena, botonOjo);
 
-  // Mientras escribes el correo: aparece el recuadro con el rol detectado y
-  // se abren los campos extra de ese rol (carrera / materia).
-  const refrescarRol = (correo: string): void => {
-    const rol = detectarMientrasSeEscribe(correo);
+  campoCodigo.addEventListener("input", () => {
+    campoCodigo.value = campoCodigo.value.replace(/\D/g, "").slice(0, 6);
+  });
 
-    if (rol === null) {
-      rolDetectadoDiv.style.display = "none";
-      zonaEstudiante.style.display = "none";
-      zonaDocente.style.display = "none";
-      return;
-    }
-
-    rolDetectadoDiv.style.display = "none";
-
-    // Estudiante e invitado ven el campo de carrera; docente y admin no lo necesitan
-    zonaEstudiante.style.display =
-      rol === "estudiante" || rol === "invitado" ? "block" : "none";
-    zonaDocente.style.display = rol === "docente" ? "block" : "none";
-  };
-
-  campoCorreo.addEventListener("input", () =>
-    refrescarRol(campoCorreo.value.trim()),
-  );
-
-  botonRegistrar.addEventListener("click", async () => {
+  const validarDatos = (): boolean => {
     const nombreCompleto = campoNombre.value.trim();
     const correo = campoCorreo.value.trim().toLowerCase();
     const contrasena = campoContrasena.value;
 
-    if (nombreCompleto.length === 0) {
+    if (nombreCompleto.length < 3) {
       mensajeError.textContent = t("login.msg.nombreVacio");
-      return;
+      return false;
     }
-    if (!correo.includes("@")) {
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
       mensajeError.textContent = t("login.msg.correoInvalido");
-      return;
+      return false;
     }
     if (contrasena.length < 6) {
       mensajeError.textContent = t("login.msg.contrasenaCorta");
+      return false;
+    }
+
+    return true;
+  };
+
+  const enviarCodigo = async (esReenvio: boolean): Promise<void> => {
+    if (!esReenvio && !validarDatos()) return;
+
+    const correo = campoCorreo.value.trim().toLowerCase();
+
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
+      mensajeError.textContent = t("login.msg.correoInvalido");
       return;
     }
 
-    mensajeError.textContent = "";
-    botonRegistrar.disabled = true;
-    botonRegistrar.textContent = t("login.msg.guardando");
+    const boton = esReenvio ? botonReenviar : botonRegistrar;
+    const textoOriginal = esReenvio
+      ? t("login.reenviarCodigo")
+      : t("login.botonEnviarCodigo");
 
-    const rolPrevisto = detectarRolPorCorreo(correo);
+    mensajeError.textContent = "";
+    boton.disabled = true;
+    boton.textContent = t("login.msg.enviando");
+
+    try {
+      const res = await fetch(`${API_URL}/registro/solicitar-codigo`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ correo }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        mensajeError.textContent = data.error || t("login.msg.errorEnvio");
+        return;
+      }
+
+      correoEnviado = correo;
+      codigoEnviado = true;
+      campoCorreo.disabled = true;
+      pistaCodigo.textContent = t("login.codigoPista", { correo });
+      zonaCodigo.style.display = "block";
+      botonRegistrar.style.display = "none";
+      mensajeError.textContent = "";
+      campoCodigo.focus();
+    } catch {
+      mensajeError.textContent = t("perfil.msg.sinServidor");
+    } finally {
+      boton.disabled = false;
+      boton.textContent = textoOriginal;
+    }
+  };
+
+  const verificarYRegistrar = async (): Promise<void> => {
+    if (!validarDatos()) return;
+
+    const codigo = campoCodigo.value.trim();
+
+    if (!/^\d{6}$/.test(codigo)) {
+      mensajeError.textContent = t("login.msg.codigoRequerido");
+      campoCodigo.focus();
+      return;
+    }
+
+    const correo = correoEnviado || campoCorreo.value.trim().toLowerCase();
 
     const nuevaCuenta = {
-      nombreCompleto,
+      nombreCompleto: campoNombre.value.trim(),
       correo,
-      contrasena,
-      carrera:
-        rolPrevisto === "estudiante" || rolPrevisto === "invitado"
-          ? campoCarrera.value.trim()
-          : undefined,
-      materia:
-        rolPrevisto === "docente" ? campoMateria.value.trim() : undefined,
+      contrasena: campoContrasena.value,
+      carrera: campoCarrera.value.trim(),
+      codigo,
     };
+
+    mensajeError.textContent = "";
+    botonVerificar.disabled = true;
+    botonVerificar.textContent = t("login.msg.verificando");
 
     try {
       const res = await fetch(`${API_URL}/registro`, {
@@ -774,23 +810,52 @@ function mostrarFormularioRegistro(
         body: JSON.stringify(nuevaCuenta),
       });
 
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        mensajeError.textContent =
-          data.error || t("login.msg.errorRegistro");
-        botonRegistrar.disabled = false;
-        botonRegistrar.textContent = t("login.botonRegistrarme");
+        mensajeError.textContent = data.error || t("login.msg.errorRegistro");
         return;
       }
 
       guardarSesion(data.cuenta.correo, data.cuenta, data.token);
       overlay.remove();
       alIniciarSesion(data.cuenta);
-    } catch (err) {
+    } catch {
       mensajeError.textContent = t("perfil.msg.sinServidor");
-      botonRegistrar.disabled = false;
-      botonRegistrar.textContent = t("login.botonRegistrarme");
+    } finally {
+      botonVerificar.disabled = false;
+      botonVerificar.textContent = t("login.botonVerificar");
+    }
+  };
+
+  botonRegistrar.addEventListener("click", () => {
+    void enviarCodigo(false);
+  });
+
+  botonVerificar.addEventListener("click", () => {
+    void verificarYRegistrar();
+  });
+
+  botonReenviar.addEventListener("click", () => {
+    void enviarCodigo(true);
+  });
+
+  botonCambiarCorreo.addEventListener("click", () => {
+    correoEnviado = "";
+    codigoEnviado = false;
+    campoCorreo.disabled = false;
+    campoCodigo.value = "";
+    zonaCodigo.style.display = "none";
+    botonRegistrar.style.display = "block";
+    botonRegistrar.textContent = t("login.botonEnviarCodigo");
+    mensajeError.textContent = "";
+    campoCorreo.focus();
+  });
+
+  campoCodigo.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      void verificarYRegistrar();
     }
   });
 

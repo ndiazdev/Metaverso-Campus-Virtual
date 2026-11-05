@@ -7,6 +7,11 @@ import type { Cuenta, Clase } from "../../state/estado";
 import { etiquetaRol, fechaCorta } from "./dashboardComun";
 import { montarFiltrosClases } from "./dashboardFiltros";
 import { t } from "../../state/idioma";
+import {
+  conectarSelectorSalon,
+  htmlSelectorSalon,
+  leerTipoSalonSeleccionado,
+} from "./selectorSalon";
 
 // ============================================================
 // CONFIGURACIÓN API
@@ -315,7 +320,7 @@ export async function mostrarDashboardDocente(
     modal.innerHTML = `
 
       <div
-        class="dash-modal"
+        class="dash-modal dash-modal-clase"
         role="dialog"
         aria-modal="true"
         aria-labelledby="tituloModalClase"
@@ -350,6 +355,8 @@ export async function mostrarDashboardDocente(
           id="campoMateriaNueva"
           placeholder="${t("docente.placeholderMateria")}"
         />
+
+        ${htmlSelectorSalon("normal")}
 
 
         <p
@@ -424,6 +431,8 @@ export async function mostrarDashboardDocente(
       "#botonConfirmarClase",
     )!;
 
+    conectarSelectorSalon(modal);
+
     // ========================================================
     // CONFIRMAR CREACIÓN
     // ========================================================
@@ -434,6 +443,8 @@ export async function mostrarDashboardDocente(
       // ----------------------------------------------------
 
       const materia = campoMateria.value.trim();
+
+      const tipoSalon = leerTipoSalonSeleccionado(modal);
 
       // ----------------------------------------------------
       // Validar
@@ -483,6 +494,8 @@ export async function mostrarDashboardDocente(
             correoDocente: cuenta.correo,
 
             nombreDocente: cuenta.nombreCompleto,
+
+            tipoSalon: tipoSalon,
           }),
         });
 
@@ -507,7 +520,7 @@ export async function mostrarDashboardDocente(
         modal.innerHTML = `
 
             <div
-              class="dash-modal"
+              class="dash-modal dash-modal-clase"
               role="dialog"
               aria-modal="true"
               aria-labelledby="tituloModalClase"
@@ -586,8 +599,9 @@ export async function mostrarDashboardDocente(
               nombreDocente: cuenta.nombreCompleto,
 
               fechaCreacion: new Date().toISOString(),
-
               estudiantesInscritos: [],
+
+              tipoSalon: tipoSalon,
             };
 
             alEntrarAClase(nuevaClase);
