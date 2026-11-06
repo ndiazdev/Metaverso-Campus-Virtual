@@ -368,10 +368,19 @@ export interface MontajeAnimaciones {
  *
  * La misma convención que los empties de pie (rotación diestro→zurdo y flip
  * del loader incluidos, porque ambos archivos pasan por el mismo loader).
+ *
+ * Además, el personaje no tiene por qué estar exportado a la escala del clip:
+ * profeHombre.glb trae el armature a ×0.046 (el resto y los clips a ×0.01), es
+ * decir, el cuerpo entero 4.6 veces más grande en unidades del .glb. Como
+ * personaje.ts escala estos vectores con la escala de la raíz del personaje,
+ * se pasan antes a SUS unidades: (empty − armature del clip) × proporción de
+ * armatures + armature del personaje. Sin eso, las dos cámaras sentadas de ese
+ * modelo quedaban 4.6 veces más cerca, metidas en la cadera.
  */
 function medirVaciosSentado(
   carga: BABYLON.ISceneLoaderAsyncResult,
   armPersonaje: BABYLON.TransformNode | null,
+  raizPersonaje: BABYLON.AbstractMesh | null,
 ): { primera: BABYLON.Vector3 | null; tercera: BABYLON.Vector3 | null } {
   const nodos: BABYLON.TransformNode[] = [...carga.transformNodes, ...carga.meshes];
   const raizExterna =
@@ -382,19 +391,39 @@ function medirVaciosSentado(
   const armExterno =
     hipsExterno?.parent instanceof BABYLON.TransformNode ? hipsExterno.parent : null;
 
-  let delta = BABYLON.Vector3.Zero();
+  raizExterna?.computeWorldMatrix?.(true);
+  const origenExterno = raizExterna?.absolutePosition ?? BABYLON.Vector3.Zero();
+
+  // Armature del clip, relativo a la raíz de su archivo (unidades del clip).
+  let armClip = BABYLON.Vector3.Zero();
+  // Armature del personaje, relativo a su raíz y en unidades de SU .glb (la
+  // raíz ya está escalada a la estatura del salón: se deshace esa escala).
+  let armChar = BABYLON.Vector3.Zero();
+  let proporcion = 1;
   if (armPersonaje && armExterno) {
     armPersonaje.computeWorldMatrix?.(true);
     armExterno.computeWorldMatrix?.(true);
-    delta = armPersonaje.absolutePosition.subtract(armExterno.absolutePosition);
+    armClip = armExterno.absolutePosition.subtract(origenExterno);
+
+    const escalaRaiz = raizPersonaje ? Math.abs(raizPersonaje.scaling.y) : 1;
+    const origenChar = raizPersonaje?.absolutePosition ?? BABYLON.Vector3.Zero();
+    if (escalaRaiz > 0) {
+      armChar = armPersonaje.absolutePosition.subtract(origenChar).scale(1 / escalaRaiz);
+    }
+
+    const p = Math.abs(armPersonaje.scaling.y) / Math.abs(armExterno.scaling.y);
+    if (Number.isFinite(p) && p > 0) proporcion = p;
   }
 
   const relativo = (subcadena: string): BABYLON.Vector3 | null => {
     const vacio = nodos.find((n) => n.name.toLowerCase().includes(subcadena));
     if (!vacio || !raizExterna) return null;
     vacio.computeWorldMatrix?.(true);
-    raizExterna.computeWorldMatrix?.(true);
-    const p = vacio.absolutePosition.subtract(raizExterna.absolutePosition).add(delta);
+    const p = vacio.absolutePosition
+      .subtract(origenExterno)
+      .subtract(armClip)
+      .scale(proporcion)
+      .add(armChar);
     return Number.isFinite(p.y) ? p : null;
   };
 
@@ -402,7 +431,8 @@ function medirVaciosSentado(
   const tercera = relativo("3persona");
   console.log(
     `[anim] empties sentado (sin escalar) → 1P ${primera?.toString() ?? "—"} · ` +
-      `3P ${tercera?.toString() ?? "—"} · Δ armature ${delta.toString()}`,
+      `3P ${tercera?.toString() ?? "—"} · armature clip ${armClip.toString()} · ` +
+      `armature personaje ${armChar.toString()} · proporción ×${proporcion.toFixed(3)}`,
   );
   return { primera, tercera };
 }
@@ -537,7 +567,7 @@ export async function montarAnimaciones(
           // Los empties de cámara del clip sentado se miden ANTES de tirar los
           // nodos del archivo externo: dan la vista 1ª/3ª persona con el cuerpo
           // sentado (si el archivo no los trae, quedan null y valen los respaldos).
-          if (slot === "sentarse") vaciosSentado = medirVaciosSentado(carga, armPersonaje);
+          if (slot === "sentarse") vaciosSentado = medirVaciosSentado(carga, armPersonaje, raiz);
         }
         for (const otro of carga.animationGroups) if (otro !== grupo) descartes.add(otro);
         if (!enlazado) descartes.add(grupo);
