@@ -214,12 +214,16 @@ interface RespuestaEntrada {
 // eso es http://localhost:3000; en producción no hay URL que
 // configurar porque front y back son el mismo servidor.
 //
-// Se usa SOLO el origen: socket.io toma cualquier ruta de la URL como
-// NAMESPACE, y en producción el sitio vive en un subdirectorio
-// (/metaverso-santototunja/api): conectar a "/metaverso-santototunja"
-// pedía ese namespace y el servidor respondía "Invalid namespace".
-function calcularUrlDeSockets(): string {
-  return new URL(API_URL, window.location.origin).origin;
+// En producción el sitio vive en un subdirectorio (/metaverso-santototunja/)
+// y el proxy publica el socket en /metaverso-santototunja/socket.io/; el
+// /socket.io/ de la raíz del dominio es de OTRA aplicación. Por eso:
+//   · la URL es SOLO el origen: socket.io toma cualquier ruta de la URL
+//     como namespace ("Invalid namespace").
+//   · el subdirectorio va en `path`, que es la ruta HTTP del handshake.
+function calcularConexionDeSockets(): { url: string; path: string } {
+  const api = new URL(API_URL, window.location.origin);
+  const prefijo = api.pathname.replace(/\/api\/?$/, "").replace(/\/+$/, "");
+  return { url: api.origin, path: `${prefijo}/socket.io` };
 }
 
 // ---------------------------------------------------------------
@@ -358,7 +362,9 @@ export function crearPresencia(
 
   function arrancar(): void {
     opciones.alCambiarConexion("conectando");
-    socket = io(calcularUrlDeSockets(), {
+    const conexion = calcularConexionDeSockets();
+    socket = io(conexion.url, {
+      path: conexion.path,
       transports: ["websocket", "polling"],
       auth: { token: obtenerToken() || undefined },
       // Si el servidor reinicia, socket.io reintenta solo; al reconectar
