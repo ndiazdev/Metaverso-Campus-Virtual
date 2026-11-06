@@ -213,9 +213,13 @@ interface RespuestaEntrada {
 // cuelga de /api pero el canal de sockets vive en "/". En desarrollo
 // eso es http://localhost:3000; en producción no hay URL que
 // configurar porque front y back son el mismo servidor.
+//
+// Se usa SOLO el origen: socket.io toma cualquier ruta de la URL como
+// NAMESPACE, y en producción el sitio vive en un subdirectorio
+// (/metaverso-santototunja/api): conectar a "/metaverso-santototunja"
+// pedía ese namespace y el servidor respondía "Invalid namespace".
 function calcularUrlDeSockets(): string {
-  const sinApi = API_URL.replace(/\/api\/?$/, "");
-  return sinApi || window.location.origin;
+  return new URL(API_URL, window.location.origin).origin;
 }
 
 // ---------------------------------------------------------------
