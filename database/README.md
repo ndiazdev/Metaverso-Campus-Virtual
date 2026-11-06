@@ -46,21 +46,9 @@ DB_PASSWORD=clave_mysql
 DB_NAME=usta_metaverso
 
 JWT_SECRET=una_cadena_larga_y_aleatoria
-CODIGO_SECRET=otra_cadena_larga_y_aleatoria
 ```
 
-Para que los códigos de verificación se envíen por correo en producción, configura también:
-
-```env
-SMTP_HOST=smtp.tudominio.com
-SMTP_PORT=587
-SMTP_SECURE=false
-SMTP_USER=usuario_smtp
-SMTP_PASS=clave_smtp
-SMTP_FROM=Campus Metaverso <no-reply@tudominio.com>
-```
-
-Sin SMTP, en desarrollo el código de 6 dígitos se imprime en la consola del backend. En producción, el registro fallará si no hay SMTP configurado.
+El registro crea la cuenta directamente, sin código de verificación por correo. La página pública registra estudiantes; los docentes se crean desde el panel de administración.
 
 ## 3. Instalar y ejecutar
 
@@ -89,10 +77,9 @@ Entra a MySQL y ejecuta:
 USE usta_metaverso;
 SHOW TABLES;
 SELECT COUNT(*) FROM cuentas;
-DESCRIBE verificaciones_correo;
 ```
 
-Deben aparecer las tablas `cuentas`, `clases`, `inscripciones` y `verificaciones_correo`.
+Deben aparecer las tablas `cuentas`, `clases` e `inscripciones`.
 
 ## 5. Errores comunes
 
@@ -103,7 +90,6 @@ Deben aparecer las tablas `cuentas`, `clases`, `inscripciones` y `verificaciones
 | `ERROR 1215: Cannot add foreign key constraint` | Orden de tablas o FK activas durante la importación | El archivo incluye `SET FOREIGN_KEY_CHECKS=0`; verifica que se ejecute completo |
 | `ERROR 1142: LOCK TABLES command denied` | El hosting no permite `LOCK TABLES` | Ya se quitaron los `LOCK TABLES` del dump |
 | `ECONNREFUSED` al iniciar el backend | MySQL no está corriendo o el host/puerto es incorrecto | Revisa `DB_HOST`, `DB_PORT` y el servicio de MySQL |
-| El código no llega por correo | SMTP no configurado | Configura `SMTP_*` o revisa la consola del backend en desarrollo |
 
 ## 6. Notas de seguridad
 

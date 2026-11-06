@@ -1,9 +1,11 @@
 // ======================================================
 // RUTA: AUTENTICACIÓN
 // ------------------------------------------------------
-// POST /api/login                    → valida correo y contraseña
-// POST /api/registro/solicitar-codigo → envía un código de 6 dígitos
-// POST /api/registro                 → verifica el código y crea la cuenta
+// POST /api/login     → valida correo y contraseña
+// POST /api/registro  → crea la cuenta directamente (sin código)
+//
+// El registro público solo crea estudiantes y docentes. El rol admin
+// se asigna únicamente desde el panel de administración.
 // ======================================================
 
 import { Router } from "express";
@@ -11,16 +13,16 @@ import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
 import { db } from "../db";
 import { ENTORNO } from "../entorno";
-import {
-  correoValido,
-  esSolicitudFallida,
-  esVerificacionFallida,
-  normalizarCorreo,
-  solicitarCodigo,
-  verificarCodigo,
-} from "../verificacionCorreo";
 
 export const rutasAuth = Router();
+
+function normalizarCorreo(valor: unknown): string {
+  return String(valor ?? "").trim().toLowerCase();
+}
+
+function correoValido(correo: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo);
+}
 
 // ------------------------------------------------------
 // LOGIN
@@ -93,61 +95,16 @@ rutasAuth.post("/login", async (req, res) => {
 });
 
 // ------------------------------------------------------
-// REGISTRO: PEDIR CÓDIGO
-// ------------------------------------------------------
-
-rutasAuth.post("/registro/solicitar-codigo", async (req, res) => {
-  const correo = normalizarCorreo(req.body?.correo);
-
-  if (!correoValido(correo)) {
-    return res.status(400).json({
-      error: "Escribe un correo válido.",
-    });
-  }
-
-  try {
-    const [existentes]: any = await db.query(
-      "SELECT id FROM cuentas WHERE correo = ?",
-      [correo]
-    );
-
-    if (existentes.length > 0) {
-      return res.status(409).json({
-        error: "Ya existe una cuenta con ese correo.",
-      });
-    }
-
-    const resultado = await solicitarCodigo(correo);
-
-    if (esSolicitudFallida(resultado)) {
-      return res.status(resultado.status).json({
-        error: resultado.error,
-      });
-    }
-
-    return res.json({
-      mensaje: "Código enviado. Revisa tu correo.",
-    });
-  } catch (error) {
-    console.error("--- ERROR AL ENVIAR EL CÓDIGO ---");
-    console.error(error);
-
-    return res.status(500).json({
-      error: "No se pudo enviar el código. Intenta de nuevo.",
-    });
-  }
-});
-
-// ------------------------------------------------------
-// REGISTRO: VERIFICAR Y CREAR CUENTA
+// REGISTRO: CREAR CUENTA
 // ------------------------------------------------------
 
 rutasAuth.post("/registro", async (req, res) => {
   const nombre = String(req.body?.nombreCompleto ?? "").trim();
   const correo = normalizarCorreo(req.body?.correo);
   const clave = String(req.body?.contrasena ?? "");
-  const codigo = String(req.body?.codigo ?? "").trim();
+  const rol = String(req.body?.rol ?? "estudiante").trim().toLowerCase();
   const carrera = String(req.body?.carrera ?? "").trim() || null;
+  const materia = String(req.body?.materia ?? "").trim() || null;
 
   if (!nombre || !correo || !clave) {
     return res.status(400).json({
@@ -173,9 +130,21 @@ rutasAuth.post("/registro", async (req, res) => {
     });
   }
 
-  if (!/^\d{6}$/.test(codigo)) {
+  if (rol !== "estudiante" && rol !== "docente") {
     return res.status(400).json({
-      error: "Escribe el código de 6 dígitos.",
+      error: "El rol debe ser estudiante o docente.",
+    });
+  }
+
+  if (rol === "estudiante" && !carrera) {
+    return res.status(400).json({
+      error: "Los estudiantes deben tener carrera.",
+    });
+  }
+
+  if (rol === "docente" && !materia) {
+    return res.status(400).json({
+      error: "Los docentes deben tener materia.",
     });
   }
 
@@ -191,16 +160,9 @@ rutasAuth.post("/registro", async (req, res) => {
       });
     }
 
-    const verificacion = await verificarCodigo(correo, codigo);
-
-    if (esVerificacionFallida(verificacion)) {
-      return res.status(400).json({
-        error: verificacion.error,
-      });
-    }
-
     const hash = await bcrypt.hash(clave, 10);
-    const rolRegistro = "estudiante";
+    const carreraFinal = rol === "estudiante" ? carrera : null;
+    const materiaFinal = rol === "docente" ? materia : null;
 
     const [resultado]: any = await db.query(
       `
@@ -213,18 +175,18 @@ rutasAuth.post("/registro", async (req, res) => {
           carrera,
           materia
         )
-        VALUES (?, ?, ?, ?, ?, NULL)
+        VALUES (?, ?, ?, ?, ?, ?)
       `,
-      [nombre, correo, hash, rolRegistro, carrera]
+      [nombre, correo, hash, rol, carreraFinal, materiaFinal]
     );
 
     const cuenta = {
       id: resultado.insertId,
       nombreCompleto: nombre,
       correo,
-      rol: rolRegistro,
-      carrera,
-      materia: null,
+      rol,
+      carrera: carreraFinal,
+      materia: materiaFinal,
     };
 
     const token = jwt.sign(

@@ -181,23 +181,6 @@ const ESTILOS = `
   .login-enlace { text-align: center; color: var(--c-texto-suave); font-size: 13.5px; margin: 18px 0 0 0; }
   .login-enlace a { color: var(--c-marca); font-weight: 700; cursor: pointer; text-decoration: underline; text-underline-offset: 3px; }
 
-  /* ---------------- CÓDIGO DE VERIFICACIÓN (crear cuenta) ---------------- */
-  .login-codigo-caja {
-    margin: 4px 0 16px; padding: 14px; border-radius: 12px;
-    background: color-mix(in srgb, var(--c-marca) 6%, transparent);
-    border: 1px solid color-mix(in srgb, var(--c-marca) 25%, transparent);
-  }
-  .login-codigo-titulo { margin: 0 0 4px; font-size: 14px; font-weight: 800; color: var(--c-marca); }
-  .login-codigo-pista { margin: 0 0 12px; font-size: 12.5px; color: var(--c-texto-suave); line-height: 1.4; }
-  .login-input-codigo { text-align: center; font-size: 22px; letter-spacing: 8px; font-weight: 800; }
-  .login-codigo-acciones { display: flex; justify-content: space-between; gap: 12px; margin-top: 10px; }
-  .login-enlace-boton {
-    background: none; border: none; padding: 0; color: var(--c-marca); font: inherit;
-    font-size: 12.5px; font-weight: 700; cursor: pointer; text-decoration: underline;
-    text-underline-offset: 3px;
-  }
-  .login-enlace-boton:disabled { color: var(--c-texto-tenue); cursor: not-allowed; text-decoration: none; }
-
   /* ---------------- SELECTOR DE IDIOMA / TEMA ----------------
      Va arriba a la derecha de la tarjeta para poder cambiar el
      idioma ANTES de entrar, sin cuenta. */
@@ -577,9 +560,6 @@ function mostrarFormularioRegistro(
     contrasena?: string;
     visible?: boolean;
     carrera?: string;
-    codigo?: string;
-    codigoEnviado?: boolean;
-    correoEnviado?: string;
   } = {},
 ): void {
   const overlay = document.createElement("div");
@@ -601,7 +581,7 @@ function mostrarFormularioRegistro(
 
         <label class="login-etiqueta" for="campoCorreo">${t("login.correo")}</label>
         <div class="login-campo">
-          <input id="campoCorreo" class="login-input" type="email" placeholder="nombre.apellido@correo.com" value="${estado.correo ?? ""}" ${estado.codigoEnviado ? "disabled" : ""} />
+          <input id="campoCorreo" class="login-input" type="email" placeholder="nombre.apellido@correo.com" value="${estado.correo ?? ""}" />
         </div>
 
         <label class="login-etiqueta" for="campoContrasena">${t("perfil.contrasenaTitulo")}</label>
@@ -612,30 +592,14 @@ function mostrarFormularioRegistro(
           </button>
         </div>
 
-        <div id="zonaEstudiante">
-          <label class="login-etiqueta" for="campoCarrera">${t("perfil.carrera")}</label>
-          <div class="login-campo">
-            <input id="campoCarrera" class="login-input" type="text" placeholder="${t("login.ph.carrera")}" value="${estado.carrera ?? ""}" />
-          </div>
-        </div>
-
-        <div class="login-codigo-caja" id="zonaCodigo" style="display:${estado.codigoEnviado ? "block" : "none"};">
-          <p class="login-codigo-titulo">${t("login.codigoTitulo")}</p>
-          <p class="login-codigo-pista" id="pistaCodigo">${estado.correoEnviado ? t("login.codigoPista", { correo: estado.correoEnviado }) : ""}</p>
-          <label class="login-etiqueta" for="campoCodigo">${t("login.codigoEtiqueta")}</label>
-          <div class="login-campo">
-            <input id="campoCodigo" class="login-input login-input-codigo" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6" placeholder="123456" value="${estado.codigo ?? ""}" />
-          </div>
-          <button class="login-boton" id="botonVerificar">${t("login.botonVerificar")}</button>
-          <div class="login-codigo-acciones">
-            <button type="button" class="login-enlace-boton" id="botonReenviar">${t("login.reenviarCodigo")}</button>
-            <button type="button" class="login-enlace-boton" id="botonCambiarCorreo">${t("login.cambiarCorreo")}</button>
-          </div>
+        <label class="login-etiqueta" for="campoCarrera">${t("perfil.carrera")}</label>
+        <div class="login-campo">
+          <input id="campoCarrera" class="login-input" type="text" placeholder="${t("login.ph.carrera")}" value="${estado.carrera ?? ""}" />
         </div>
 
         <p class="login-error" id="mensajeError"></p>
 
-        <button class="login-boton" id="botonRegistrar" style="display:${estado.codigoEnviado ? "none" : "block"};">${t("login.botonEnviarCodigo")}</button>
+        <button class="login-boton" id="botonRegistrar">${t("login.botonRegistrarme")}</button>
 
         <p class="login-enlace">${t("login.yaTienesCuenta")} <a id="enlaceLogin">${t("login.enlaceIniciaSesion")}</a></p>
       </div>
@@ -649,9 +613,6 @@ function mostrarFormularioRegistro(
   iniciarCarrusel(overlay);
 
   // Igual que en el login: cambiar el idioma repinta y conserva lo escrito.
-  let correoEnviado = estado.correoEnviado ?? "";
-  let codigoEnviado = Boolean(estado.codigoEnviado);
-
   const repintarRegistro = (): void => {
     const campo = (sel: string): string =>
       overlay.querySelector<HTMLInputElement>(sel)?.value ?? "";
@@ -666,9 +627,6 @@ function mostrarFormularioRegistro(
         overlay.querySelector<HTMLInputElement>("#campoContrasena")?.type ===
         "text",
       carrera: campo("#campoCarrera"),
-      codigo: campo("#campoCodigo"),
-      codigoEnviado,
-      correoEnviado,
     };
 
     overlay.remove();
@@ -685,28 +643,13 @@ function mostrarFormularioRegistro(
   const botonOjo = overlay.querySelector<HTMLButtonElement>("#botonOjo")!;
   const campoCarrera =
     overlay.querySelector<HTMLInputElement>("#campoCarrera")!;
-  const campoCodigo =
-    overlay.querySelector<HTMLInputElement>("#campoCodigo")!;
   const mensajeError =
     overlay.querySelector<HTMLParagraphElement>("#mensajeError")!;
   const botonRegistrar =
     overlay.querySelector<HTMLButtonElement>("#botonRegistrar")!;
-  const botonVerificar =
-    overlay.querySelector<HTMLButtonElement>("#botonVerificar")!;
-  const botonReenviar =
-    overlay.querySelector<HTMLButtonElement>("#botonReenviar")!;
-  const botonCambiarCorreo =
-    overlay.querySelector<HTMLButtonElement>("#botonCambiarCorreo")!;
-  const zonaCodigo = overlay.querySelector<HTMLDivElement>("#zonaCodigo")!;
-  const pistaCodigo =
-    overlay.querySelector<HTMLParagraphElement>("#pistaCodigo")!;
   const enlaceLogin = overlay.querySelector<HTMLAnchorElement>("#enlaceLogin")!;
 
   vincularOjo(campoContrasena, botonOjo);
-
-  campoCodigo.addEventListener("input", () => {
-    campoCodigo.value = campoCodigo.value.replace(/\D/g, "").slice(0, 6);
-  });
 
   const validarDatos = (): boolean => {
     const nombreCompleto = campoNombre.value.trim();
@@ -715,93 +658,42 @@ function mostrarFormularioRegistro(
 
     if (nombreCompleto.length < 3) {
       mensajeError.textContent = t("login.msg.nombreVacio");
+      campoNombre.focus();
       return false;
     }
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
       mensajeError.textContent = t("login.msg.correoInvalido");
+      campoCorreo.focus();
       return false;
     }
     if (contrasena.length < 6) {
       mensajeError.textContent = t("login.msg.contrasenaCorta");
+      campoContrasena.focus();
+      return false;
+    }
+    if (!campoCarrera.value.trim()) {
+      mensajeError.textContent = t("login.msg.carreraRequerida");
+      campoCarrera.focus();
       return false;
     }
 
     return true;
   };
 
-  const enviarCodigo = async (esReenvio: boolean): Promise<void> => {
-    if (!esReenvio && !validarDatos()) return;
-
-    const correo = campoCorreo.value.trim().toLowerCase();
-
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(correo)) {
-      mensajeError.textContent = t("login.msg.correoInvalido");
-      return;
-    }
-
-    const boton = esReenvio ? botonReenviar : botonRegistrar;
-    const textoOriginal = esReenvio
-      ? t("login.reenviarCodigo")
-      : t("login.botonEnviarCodigo");
-
-    mensajeError.textContent = "";
-    boton.disabled = true;
-    boton.textContent = t("login.msg.enviando");
-
-    try {
-      const res = await fetch(`${API_URL}/registro/solicitar-codigo`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ correo }),
-      });
-
-      const data = await res.json().catch(() => ({}));
-
-      if (!res.ok) {
-        mensajeError.textContent = data.error || t("login.msg.errorEnvio");
-        return;
-      }
-
-      correoEnviado = correo;
-      codigoEnviado = true;
-      campoCorreo.disabled = true;
-      pistaCodigo.textContent = t("login.codigoPista", { correo });
-      zonaCodigo.style.display = "block";
-      botonRegistrar.style.display = "none";
-      mensajeError.textContent = "";
-      campoCodigo.focus();
-    } catch {
-      mensajeError.textContent = t("perfil.msg.sinServidor");
-    } finally {
-      boton.disabled = false;
-      boton.textContent = textoOriginal;
-    }
-  };
-
-  const verificarYRegistrar = async (): Promise<void> => {
+  const registrar = async (): Promise<void> => {
     if (!validarDatos()) return;
-
-    const codigo = campoCodigo.value.trim();
-
-    if (!/^\d{6}$/.test(codigo)) {
-      mensajeError.textContent = t("login.msg.codigoRequerido");
-      campoCodigo.focus();
-      return;
-    }
-
-    const correo = correoEnviado || campoCorreo.value.trim().toLowerCase();
 
     const nuevaCuenta = {
       nombreCompleto: campoNombre.value.trim(),
-      correo,
+      correo: campoCorreo.value.trim().toLowerCase(),
       contrasena: campoContrasena.value,
+      rol: "estudiante",
       carrera: campoCarrera.value.trim(),
-      codigo,
     };
 
     mensajeError.textContent = "";
-    botonVerificar.disabled = true;
-    botonVerificar.textContent = t("login.msg.verificando");
+    botonRegistrar.disabled = true;
+    botonRegistrar.textContent = t("login.msg.guardando");
 
     try {
       const res = await fetch(`${API_URL}/registro`, {
@@ -823,41 +715,25 @@ function mostrarFormularioRegistro(
     } catch {
       mensajeError.textContent = t("perfil.msg.sinServidor");
     } finally {
-      botonVerificar.disabled = false;
-      botonVerificar.textContent = t("login.botonVerificar");
+      botonRegistrar.disabled = false;
+      botonRegistrar.textContent = t("login.botonRegistrarme");
     }
   };
 
   botonRegistrar.addEventListener("click", () => {
-    void enviarCodigo(false);
+    void registrar();
   });
 
-  botonVerificar.addEventListener("click", () => {
-    void verificarYRegistrar();
-  });
-
-  botonReenviar.addEventListener("click", () => {
-    void enviarCodigo(true);
-  });
-
-  botonCambiarCorreo.addEventListener("click", () => {
-    correoEnviado = "";
-    codigoEnviado = false;
-    campoCorreo.disabled = false;
-    campoCodigo.value = "";
-    zonaCodigo.style.display = "none";
-    botonRegistrar.style.display = "block";
-    botonRegistrar.textContent = t("login.botonEnviarCodigo");
-    mensajeError.textContent = "";
-    campoCorreo.focus();
-  });
-
-  campoCodigo.addEventListener("keydown", (event) => {
-    if (event.key === "Enter") {
-      event.preventDefault();
-      void verificarYRegistrar();
-    }
-  });
+  overlay
+    .querySelectorAll<HTMLInputElement>(".login-input")
+    .forEach((input) => {
+      input.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          void registrar();
+        }
+      });
+    });
 
   enlaceLogin.addEventListener("click", () => {
     overlay.remove();

@@ -397,10 +397,14 @@ function sitioSeguroCerca(escena: BABYLON.Scene, inicio: BABYLON.Vector3): BABYL
 //
 //   · estudiante/invitado -> UNO AL AZAR de Spawn1..Spawn12, mirando al frente.
 //   · docente/admin       -> Spawn_Profe, mirando a la clase.
+//   · salón reunión       -> TODOS (docente incluido) salen de un spawn
+//                            aleatorio del mapa; si no hay spawns válidos,
+//                            se reparten junto a las sillas.
 //
 // Si el mapa no trae esos empties (copia vieja en cache), se usan las
 // coordenadas exactas de esos mismos pasillos (SPAWNS_ALUMNOS_FIJOS y
-// SPAWN_PROFE_FIJO), asi que el resultado es identico.
+// SPAWN_PROFE_FIJO), asi que el resultado es identico. En reunión no se
+// usan esas coordenadas de respaldo: si faltan los spawns, se va a sillas.
 //
 // Es 100% client-side: cada cliente elige su spawn y lo publica por red
 // (estadoLocal ya manda personaje.raiz.position), asi que no hay que tocar el
@@ -423,6 +427,10 @@ function elegirPuntoAparicion(): { posicion: BABYLON.Vector3; yaw: number } {
   const respaldo = { posicion: new BABYLON.Vector3(0, SUELO_Y, -8), yaw: 0 };
 
   const esDocente = rol === "docente" || rol === "admin";
+  // En reunión todos —incluido el docente— entran por uno de los spawns
+  // aleatorios que trae el mapa. En los demás salones el docente conserva
+  // Spawn_Profe y los alumnos se reparten por los pasillos.
+  const esReunion = tipoSalonActiva === "reunion";
 
   // Rumbo para mirar al frente (atril/tablero). El convenio del proyecto es
   // yaw = atan2(dir.x, dir.z); sin atril se mira a +X, que es el frente del aula.
@@ -435,8 +443,10 @@ function elegirPuntoAparicion(): { posicion: BABYLON.Vector3; yaw: number } {
       : Math.PI / 2;
 
   // --- PUNTOS DEL MAPA (o sus coordenadas de respaldo) ---------------------
-  // 1) DOCENTE / ADMIN: "Spawn_Profe", mirando al centro de la clase.
-  if (esDocente) {
+  // 1) DOCENTE / ADMIN (salones normal/griego): "Spawn_Profe", mirando al
+  // centro de la clase. En reunión se salta este bloque: todos usan los
+  // spawns aleatorios del mapa.
+  if (esDocente && !esReunion) {
     const puntoProfe =
       puntoAparicionProfe ??
       new BABYLON.Vector3(SPAWN_PROFE_FIJO[0], SUELO_Y, SPAWN_PROFE_FIJO[1]);
@@ -461,16 +471,20 @@ function elegirPuntoAparicion(): { posicion: BABYLON.Vector3; yaw: number } {
     return { posicion, yaw };
   }
 
-  // 2) ESTUDIANTE / INVITADO: uno al azar de "Spawn1".."Spawn12", de pie en el
-  // pasillo y mirando al frente. Se recorre el resto de puntos si el elegido
-  // cae dentro de un mueble; si ninguno sirve, se cae al reparto por sillas.
-  if (!esDocente) {
-    const puntos = puntosAparicion.length
-      ? puntosAparicion
-      : SPAWNS_ALUMNOS_FIJOS.map(([x, z], i) => ({
-          nombre: `Spawn${i + 1}`,
-          posicion: new BABYLON.Vector3(x, SUELO_Y, z),
-        }));
+  // 2) ESTUDIANTE / INVITADO (y cualquier rol en reunión): uno al azar de los
+  // spawns del mapa, de pie en el pasillo y mirando al frente. Se recorre el
+  // resto de puntos si el elegido cae dentro de un mueble; si ninguno sirve,
+  // se cae al reparto por sillas.
+  if (!esDocente || esReunion) {
+    const puntos: { nombre: string; posicion: BABYLON.Vector3 }[] =
+      puntosAparicion.length
+        ? puntosAparicion
+        : esReunion
+          ? []
+          : SPAWNS_ALUMNOS_FIJOS.map(([x, z], i) => ({
+              nombre: `Spawn${i + 1}`,
+              posicion: new BABYLON.Vector3(x, SUELO_Y, z),
+            }));
 
     const inicio = Math.floor(Math.random() * puntos.length);
     for (let intento = 0; intento < puntos.length; intento++) {
@@ -1300,7 +1314,7 @@ function medirInteriorDelSalon(
     );
   } else {
     console.warn(
-      "El mapa no trae empties Spawn1..Spawn12 / Spawn_Profe: se usan las coordenadas de respaldo de los pasillos."
+      "El mapa no trae empties Spawn1..Spawn12 / Spawn_Profe: se usan las coordenadas de respaldo (en reunión, las sillas)."
     );
   }
 
