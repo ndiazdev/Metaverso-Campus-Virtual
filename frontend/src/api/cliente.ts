@@ -15,7 +15,11 @@
 // variable de entorno VITE_API_URL (archivo .env del front).
 // ======================================================
 
-import { obtenerToken } from "../state/estado";
+import {
+  cerrarSesion,
+  marcarSesionExpirada,
+  obtenerToken,
+} from "../state/estado";
 
 const PERSONALIZADA = import.meta.env.VITE_API_URL as string | undefined;
 const BASE = (import.meta.env.BASE_URL || "/").replace(/\/$/, "");
@@ -38,6 +42,9 @@ export const API_URL: string =
 // ======================================================
 const fetchOriginal = window.fetch.bind(window);
 
+/** Evita recargar en bucle si llegan varios 401 a la vez. */
+let yaRedirigiendoPorSesion = false;
+
 window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   const url =
     typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -58,5 +65,36 @@ window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response>
     }
   }
 
-  return fetchOriginal(input, init);
+  const respuesta = fetchOriginal(input, init);
+
+  // Si el backend avisa de que el token caducó, se cierra la sesión y se
+  // recarga para que aparezca el login con el aviso. Se mira el `codigo` y no
+  // el 401 a secas: /api/login también responde 401 con credenciales malas y
+  // ahí no hay que cerrar nada.
+  void respuesta.then(async (res) => {
+    if (!url.startsWith(API_URL) || res.status !== 401 || yaRedirigiendoPorSesion) return;
+    try {
+      const datos = (await res.clone().json()) as { codigo?: string };
+      // Cualquiera de los tres deja la sesión inservible: el token caducó, el
+      // servidor ya no lo reconoce (p. ej. cambió JWT_SECRET) o falta.
+      if (
+        datos?.codigo !== "SESION_EXPIRADA" &&
+        datos?.codigo !== "TOKEN_INVALIDO" &&
+        datos?.codigo !== "TOKEN_FALTANTE"
+      ) {
+        return;
+      }
+
+      yaRedirigiendoPorSesion = true;
+      cerrarSesion();
+      marcarSesionExpirada();
+      location.reload();
+    } catch {
+      // Respuesta sin JSON (proxy, HTML de error…): no es sesión caducada.
+    }
+  }).catch(() => {
+    // La petición en sí falló (red): la maneja quien hizo el fetch.
+  });
+
+  return respuesta;
 };

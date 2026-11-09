@@ -1,4 +1,4 @@
-import { guardarSesion } from "../../state/estado";
+import { consumirSesionExpirada, guardarSesion } from "../../state/estado";
 import type { Cuenta } from "../../state/estado";
 import "@fortawesome/fontawesome-free/css/all.min.css";
 
@@ -425,6 +425,12 @@ export function iniciarLogin(alIniciarSesion: (cuenta: Cuenta) => void): void {
   inyectarTema();
   inyectarEstilos();
   mostrarFormularioLogin(alIniciarSesion);
+
+  // Si se llegó aquí porque el token caducó, se explica en el propio formulario.
+  if (consumirSesionExpirada()) {
+    const aviso = document.querySelector<HTMLParagraphElement>("#mensajeError");
+    if (aviso) aviso.textContent = t("login.msg.sesionExpirada");
+  }
 }
 
 function mostrarFormularioLogin(

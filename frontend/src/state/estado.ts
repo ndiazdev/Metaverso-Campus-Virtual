@@ -222,6 +222,67 @@ export function cerrarSesion(): void {
   localStorage.removeItem(CLAVE_SESION);
 }
 
+// ---------- Caducidad del token ----------
+// El backend firma el JWT con 8 h de vida. Antes la sesión se guardaba para
+// siempre y se reutilizaba aunque el token hubiera caducado: al volver días
+// después, cualquier llamada autenticada devolvía 401. Aquí se comprueba
+// `exp` en el cliente para cerrar la sesión y pedir login a tiempo.
+
+/** Decodifica el payload de un JWT sin verificar la firma (eso es del backend). */
+function decodificarPayload(token: string): { exp?: number } | null {
+  const partes = token.split(".");
+  if (partes.length !== 3) return null;
+
+  try {
+    const base64 = partes[1].replace(/-/g, "+").replace(/_/g, "/");
+    const relleno = base64.padEnd(Math.ceil(base64.length / 4) * 4, "=");
+    // atob devuelve bytes; se rearman como UTF-8 para correos con acentos.
+    const bytes = atob(relleno);
+    const texto = decodeURIComponent(
+      [...bytes].map((c) => `%${c.charCodeAt(0).toString(16).padStart(2, "0")}`).join(""),
+    );
+    return JSON.parse(texto) as { exp?: number };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * ¿El token ya caducó? Se adelanta 30 s para no usarlo justo en el borde.
+ * Un token sin `exp` se deja pasar: decide el backend.
+ */
+export function tokenExpirado(token: string | null, margenMs = 30_000): boolean {
+  if (!token) return true;
+  const payload = decodificarPayload(token);
+  if (!payload?.exp) return false;
+  return payload.exp * 1000 <= Date.now() + margenMs;
+}
+
+/**
+ * ¿Hay una sesión guardada que ya no sirve? Incluye el caso de sesiones
+ * antiguas guardadas sin token: sin JWT la API rechaza todo, así que hay que
+ * volver a entrar igualmente.
+ */
+export function sesionExpirada(): boolean {
+  if (!obtenerSesion()) return false;
+  return tokenExpirado(obtenerToken());
+}
+
+// Aviso para el login: se guarda en sessionStorage (no en la sesión, que se
+// borra) para que la pantalla de login pueda explicar por qué se salió.
+const CLAVE_SESION_EXPIRADA = "usta_metaverso_sesion_expirada";
+
+export function marcarSesionExpirada(): void {
+  sessionStorage.setItem(CLAVE_SESION_EXPIRADA, "1");
+}
+
+/** Devuelve true una sola vez: el aviso no se repite al recargar. */
+export function consumirSesionExpirada(): boolean {
+  const habia = sessionStorage.getItem(CLAVE_SESION_EXPIRADA) === "1";
+  if (habia) sessionStorage.removeItem(CLAVE_SESION_EXPIRADA);
+  return habia;
+}
+
 // ---------- Utilidad ----------
 export function generarCodigoClase(materia: string): string {
   const abreviatura = materia

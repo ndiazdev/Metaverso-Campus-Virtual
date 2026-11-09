@@ -8,25 +8,10 @@
 // ======================================================
 
 import { Router } from "express";
-import jwt from "jsonwebtoken";
 import { db } from "../db";
-import { ENTORNO } from "../entorno";
+import { verificarAutenticacion } from "../authMiddleware";
 
 export const rutasInscripciones = Router();
-
-function verificarAutenticacion(req: any, res: any, next: any) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) {
-    return res.status(401).json({ error: "Token no proporcionado" });
-  }
-  try {
-    const payload = jwt.verify(token, ENTORNO.JWT_SECRET) as any;
-    req.usuario = payload;
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: "Token inválido" });
-  }
-}
 
 function soloAdmin(req: any, res: any, next: any) {
   if (req.usuario?.rol !== "admin") {

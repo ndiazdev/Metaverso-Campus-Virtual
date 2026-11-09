@@ -10,9 +10,8 @@
 // ======================================================
 
 import { Router } from "express";
-import jwt from "jsonwebtoken";
 import { db } from "../db";
-import { ENTORNO } from "../entorno";
+import { verificarAutenticacion } from "../authMiddleware";
 
 export const rutasClases = Router();
 
@@ -22,20 +21,6 @@ const TIPO_SALON_POR_DEFECTO: TipoSalon = "normal";
 
 function esTipoSalon(valor: unknown): valor is TipoSalon {
   return TIPOS_SALON.includes(valor as TipoSalon);
-}
-
-function verificarAutenticacion(req: any, res: any, next: any) {
-  const token = req.headers.authorization?.replace(/^Bearer\s+/i, "");
-  if (!token) {
-    return res.status(401).json({ error: "Token no proporcionado" });
-  }
-  try {
-    const payload = jwt.verify(token, ENTORNO.JWT_SECRET) as any;
-    req.usuario = payload;
-    next();
-  } catch (e) {
-    return res.status(401).json({ error: "Token inválido" });
-  }
 }
 
 function soloAdminODocente(req: any, res: any, next: any) {

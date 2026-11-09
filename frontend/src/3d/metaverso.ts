@@ -8,8 +8,13 @@ import * as BABYLON from "babylonjs";
 import "babylonjs-loaders";
 import { iniciarLogin } from "../page/login/login";
 import { mostrarDashboard } from "../page/dashboard/dashboard";
-import { obtenerSesion } from "../state/estado";
-import type { Clase } from "../state/estado";
+import {
+  cerrarSesion,
+  marcarSesionExpirada,
+  obtenerSesion,
+  sesionExpirada,
+} from "../state/estado";
+import type { Clase, Cuenta } from "../state/estado";
 import { archivoSalon, normalizarTipoSalon, type TipoSalon } from "../state/salones";
 import { ALTURA_OBJETIVO_BASE, cargarPersonaje, fijarAlturaPersonaje, type Personaje } from "./personaje";
 import { crearAvataresRemotos, type AvataresRemotos } from "./avataresRemotos";
@@ -2316,7 +2321,7 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
 
     scene.dispose();
 
-    const sesion = obtenerSesion();
+    const sesion = sesionVigente();
     if (sesion) {
       mostrarDashboard(sesion, entrarAlSalon);
     } else {
@@ -2551,10 +2556,25 @@ async function entrarPorEnlace(): Promise<boolean> {
   return true;
 }
 
-// Si no hay sesiÃ³n se pide el login primero, y solo despuÃ©s se mira el enlace:
-// asÃ­ un enlace recibido por WhatsApp funciona aunque no se estÃ© conectado.
+/**
+ * Sesión utilizable ahora mismo. Si la guardada existe pero su JWT caducó, se
+ * cierra y se deja marcado el aviso para que el login explique el motivo.
+ * (El backend firma los tokens con 8 h; sin esto el navegador reutilizaba
+ * tokens viejos y toda llamada autenticada respondía 401.)
+ */
+function sesionVigente(): Cuenta | null {
+  if (sesionExpirada()) {
+    cerrarSesion();
+    marcarSesionExpirada();
+    return null;
+  }
+  return obtenerSesion();
+}
+
+// Si no hay sesión se pide el login primero, y solo después se mira el enlace:
+// así un enlace recibido por WhatsApp funciona aunque no se esté conectado.
 async function arrancar(): Promise<void> {
-  const sesion = obtenerSesion();
+  const sesion = sesionVigente();
   if (!sesion) {
     iniciarLogin((cuenta) => {
       void entrarPorEnlace().then((entro) => {
