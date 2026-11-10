@@ -114,14 +114,6 @@ export interface ContextoFuncionalidades {
   posicionValida: (posicion: BABYLON.Vector3) => boolean;
   haySolape: (posicion: BABYLON.Vector3) => boolean;
   empujarFueraDeObstaculos: (posicion: BABYLON.Vector3) => void;
-  /**
-   * Cuerpos (XZ + radio) de las demás personas en la sala, para que nadie
-   * camine A TRAVÉS de nadie. El que camina choca contra estos discos con el
-   * mismo rechazo-por-eje que contra una mesa: se detiene y desliza, y siempre
-   * puede retroceder (no hay empujón que pueda meter a dos juntos).
-   */
-  cuerposAjenos: () => Array<{ x: number; z: number; radio: number }>;
-
   /** Píldora de proximidad ("Presiona E para sentarte"). */
   aviso: HTMLElement;
   /** Píldora de mano alzada. */
@@ -718,39 +710,22 @@ export function crearFuncionalidades(ctx: ContextoFuncionalidades): Funcionalida
         personaje.raiz.position.y = alturaAntes;
         ctx.recortarAlSalon(personaje.raiz.position, ctx.radioPersonaje);
 
-        // ¿Se choca con alguien de la clase? Cada persona remota es un DISCO en
-        // el plano XZ (su cuerpo, no su esqueleto): no se puede caminar a través
-        // de nadie. Se usa el MISMO rechazo-por-eje de los muebles, así que el
-        // que llega se detiene y desliza por el lado, y siempre puede retroceder.
-        const chocaConAlguien = (x: number, z: number): boolean => {
-          for (const cuerpo of ctx.cuerposAjenos()) {
-            const dx = x - cuerpo.x;
-            const dz = z - cuerpo.z;
-            const radio = ctx.radioPersonaje + cuerpo.radio;
-            if (dx * dx + dz * dz < radio * radio) return true;
-          }
-          return false;
-        };
-        // Validez combinada: dentro del salón, sin muebles y sin atravesar a nadie.
+        // Los avatares y skins NO son obstáculos: se puede caminar a través de
+        // otras personas. `moveWithCollisions` ya resolvió paredes y límites;
+        // aquí solo se rechaza el eje que meta el cuerpo dentro de un mueble.
         const valeEn = (x: number, z: number): boolean => {
           const guardadoX = personaje.raiz.position.x;
           const guardadoZ = personaje.raiz.position.z;
           personaje.raiz.position.x = x;
           personaje.raiz.position.z = z;
-          const ok = ctx.posicionValida(personaje.raiz.position) && !chocaConAlguien(x, z);
+          const ok = !ctx.haySolape(personaje.raiz.position);
           personaje.raiz.position.x = guardadoX;
           personaje.raiz.position.z = guardadoZ;
           return ok;
         };
 
-        // RECHAZO POR EJE, NO EMPUJÓN.
-        // Si la posición resultante no es válida (se salió del salón, cayó dentro de
-        // un mueble o atravesaría a alguien), se deshace el eje que la causó. Por qué
-        // no "empujar hacia fuera": con dos cuerpos pegados, expulsar a alguien de uno
-        // lo deja dentro del otro y se queda bloqueado sin poder caminar (era el fallo
-        // de las sillas). Al rechazar, el cuerpo nunca ocupa una posición que solape:
-        // se detiene en la boca del mueble o de la persona, desliza y siempre puede
-        // retroceder.
+        // RECHAZO POR EJE, NO EMPUJÓN: si el movimiento entró en un mueble, se
+        // deshace el eje culpable y se conserva el avance del otro (deslizamiento).
         if (!valeEn(personaje.raiz.position.x, personaje.raiz.position.z)) {
           const movidoX = personaje.raiz.position.x;
           const movidoZ = personaje.raiz.position.z;

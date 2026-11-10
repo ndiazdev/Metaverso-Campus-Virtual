@@ -2100,9 +2100,6 @@ const createScene = async function (alRenderizar: (escena: BABYLON.Scene) => voi
     posicionValida,
     haySolape,
     empujarFueraDeObstaculos,
-    // Cuerpos de las demas personas (XZ + radio): nadie camina a traves de nadie.
-    // Se lee en cada llamada, asi que funciona aunque `remotos` se cree despues.
-    cuerposAjenos: () => remotos?.cuerpos() ?? [],
     aviso,
     avisoMano,
     limpiadores: limpiadoresDePartida,

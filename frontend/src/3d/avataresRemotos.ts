@@ -107,12 +107,6 @@ export interface AvataresRemotos {
   // (Eliminado) `siluetas`: el tablero ya no recorta el vídeo con la forma del
   // cuerpo (YouTube dejó de proyectarse en la pizarra 3D), así que nadie la
   // usa.
-  /**
-   * Cuerpos (posición en el plano XZ + radio) de los avatares remotos que ya
-   * han publicado sitio. Sirve para que nadie camine A TRAVÉS de nadie: el que
-   * camina choca contra estos discos igual que contra una mesa.
-   */
-  cuerpos: () => Array<{ x: number; z: number; radio: number }>;
   /** Ancho de la etiqueta del nombre en unidades del salón (para apartar el cuadrito de vídeo). */
   anchoEtiqueta: () => number;
   /** Nombre visible de un participante (para la etiqueta del cuadrito de vídeo). */
@@ -1031,32 +1025,11 @@ export function crearAvataresRemotos(ctx: ContextoAvataresRemotos): AvataresRemo
     return avatares.get(id)?.nombre ?? "";
   }
 
-  // Radio (XZ) del cuerpo de un avatar remoto, en unidades del salón. Va con el
-  // mismo valor que RADIO_PERSONAJE del que camina, así que al chocar se separan
-  // a radio combinado (0.55 + 0.55 ≈ 1.1 u) y no se pueden cruzar.
-  const RADIO_CUERPO_REMOTO = 0.55;
-
-  function cuerpos(): Array<{ x: number; z: number; radio: number }> {
-    const resultado: Array<{ x: number; z: number; radio: number }> = [];
-    for (const avatar of avatares.values()) {
-      // Sin posición de la red todavía no hay nada con lo que chocar (la raíz
-      // se queda en el origen hasta el primer estado).
-      if (!avatar.posicionRecibida) continue;
-      resultado.push({
-        x: avatar.raiz.position.x,
-        z: avatar.raiz.position.z,
-        radio: RADIO_CUERPO_REMOTO,
-      });
-    }
-    return resultado;
-  }
-
   return {
     participantes: () => presencia?.participantes() ?? [],
     miId: () => presencia?.miId() ?? null,
     publicarTablero: (mensaje) => presencia?.publicarTablero(mensaje),
     posicionCabeza,
-    cuerpos,
     anchoEtiqueta: () => anchoEtiqueta(),
     nombreDe,
     emitirSignaling: (evento, datos) => presencia?.emitirSignaling(evento, datos),
